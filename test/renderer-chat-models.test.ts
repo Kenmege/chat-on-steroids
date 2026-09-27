@@ -5,6 +5,32 @@ import { readFile } from 'node:fs/promises';
 
 let dom: JSDOM;
 afterEach(() => { dom?.window.close(); vi.unstubAllGlobals(); vi.resetModules(); });
+it.each(['5.5', 'GPT-5.5', 'gpt-5-5-pro'])('excludes the retired composer family with observed label %s and defaults to the newest observed family', async oldLabel => {
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
+  vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
+  const models = [
+    { id: 'gpt-5-6-thinking', label: '5.6', efforts: ['medium', 'high', 'xhigh'] },
+    { id: 'gpt-6-pro', label: '6', efforts: ['pro'] },
+    { id: 'gpt-5-5-pro', label: oldLabel, efforts: ['pro'] }
+  ];
+  Object.assign(dom.window, { api: { getChatModels: async () => ({ ok: true, data: { state: 'ready', models } }) } });
+  const { initChatModels, applyChatModels, confirmedComposerModel } = await import('../src/renderer/chat-models.js');
+  initChatModels(); applyChatModels({ multiAgent: {}, goal: {} } as Config); await Promise.resolve();
+  expect([...dom.window.document.querySelectorAll<HTMLOptionElement>('#composerModel option')].map(o => o.value)).toEqual(['gpt-5-6-thinking', 'gpt-6-pro']);
+  expect(confirmedComposerModel()).toEqual({ model: 'gpt-6-pro', reasoningEffort: 'pro' });
+  expect(dom.window.document.getElementById('composerModelLabel')!.textContent).toBe('6 Pro');
+});
+
+it('does not mistake 5.50 for 5.5 or manufacture an unobserved effort for a future family', async () => {
+  dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
+  vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
+  const models = [{ id: 'gpt-5-50', label: '5.50', efforts: ['high'] }, { id: 'gpt-7-pro', label: '7', efforts: ['pro'] }];
+  Object.assign(dom.window, { api: { getChatModels: async () => ({ ok: true, data: { state: 'ready', models } }) } });
+  const { initChatModels, applyChatModels, confirmedComposerModel } = await import('../src/renderer/chat-models.js');
+  initChatModels(); applyChatModels({ multiAgent: {}, goal: {} } as Config); await Promise.resolve();
+  expect(dom.window.document.querySelectorAll('#composerModel option')).toHaveLength(2);
+  expect(confirmedComposerModel()).toEqual({ model: 'gpt-7-pro', reasoningEffort: 'pro' });
+});
 it('shows pending reasons and failed refresh separately from usable cached choices', async () => {
   dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);

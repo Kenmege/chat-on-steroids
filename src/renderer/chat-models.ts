@@ -58,10 +58,18 @@ export function applyComposerSessionModel(scope: string | null, observation: Obs
   paintComposerContext(); paintStatus();
 }
 
+/** Account catalogues use both display labels ("6") and execution slugs ("gpt-6-pro"). */
+function modelFamily(model: { id: string; label: string }): [number, number] | undefined {
+  const match = /^gpt[ -]?(\d+)(?:[.-](\d+))?(?:$|[ -][a-z])/i.exec(model.id)
+    ?? /^(?:gpt[ -]?)?(\d+)(?:[.-](\d+))?(?:$|[ -][a-z])/i.exec(model.label);
+  return match ? [Number(match[1]), Number(match[2] ?? 0)] : undefined;
+}
+
 /** Provider order and available efforts define the slider, including newly released models. */
 function composerModels() {
   if (!catalog.models.length) return [];
   return catalog.models
+    .filter(model => { const family = modelFamily(model); return family?.[0] !== 5 || family[1] !== 5; })
     .map(model => ({ ...model, efforts: composerEfforts.filter(effort => model.efforts.includes(effort)) }))
     .filter(model => model.efforts.length > 0);
 }
@@ -146,7 +154,11 @@ function paintPair(modelId: string, effortId: string, modelValue?: string, effor
   nextModel = observed?.id ?? nextModel;
   if (models.length && !nextModel) {
     // A preference selects only a model/effort actually observed in this catalog.
-    const preferred = models.find(item => /^gpt[ -]?6$/i.test(item.label) && item.efforts.includes('high'));
+    const preferred = models.reduce<(typeof models)[number] | undefined>((best, item) => {
+      const family = modelFamily(item);
+      const previous = best && modelFamily(best);
+      return family && (!previous || family[0] > previous[0] || (family[0] === previous[0] && family[1] > previous[1])) ? item : best;
+    }, undefined);
     nextModel = (preferred ?? models[0]!).id;
     nextEffort = '';
   }
