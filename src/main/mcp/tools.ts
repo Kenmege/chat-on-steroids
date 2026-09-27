@@ -13,7 +13,7 @@
  * merged list — those would both be ways of claiming a separation the product does not have.
  */
 
-import { McpServer } from '@modelcontextprotocol/server';
+import { McpServer, ResourceNotFoundError } from '@modelcontextprotocol/server';
 import { toolSchemaJson } from './tool-declarations.js';
 import type { PluginToolSchema } from '../../shared/plugin-refresh.js';
 import { createRegistrar, type ToolContext } from './kernel.js';
@@ -28,18 +28,50 @@ import { toVirtualPath } from '../sandbox.js';
 import { logWarn } from '../logger.js';
 import { withManagedSkills } from '../skill-access.js';
 
+/**
+ * In-band discovery handlers every surface must expose.
+ *
+ * OpenAI's MCP-Apps client probes `resources/read` for a conventional
+ * `ui://<server>/config-editor` resource during connector creation. The SDK
+ * answers a method with no registered handler at a pre-handler gate and maps
+ * the miss to HTTP 404, which the validator treats as fatal. Declaring the
+ * `resources`/`prompts` capabilities and answering in-band keeps the whole
+ * probe sequence on HTTP 200: an honest minimal page for `ui://` URIs (this
+ * connector exposes no configuration page), and a real not-found error —
+ * never an invented success payload — for anything else.
+ */
+const NO_CONFIG_UI_PAGE =
+  '<!doctype html><html><head><meta charset="utf-8"><title>No configuration UI</title></head>' +
+  '<body><h1>No configuration UI</h1>' +
+  '<p>This connector exposes no configuration page. Its tools are ready to use.</p></body></html>';
+
+function registerDiscoveryHandlers(server: McpServer): void {
+  server.server.setRequestHandler('resources/list', async () => ({ resources: [] }));
+  server.server.setRequestHandler('resources/read', async (request) => {
+    const uri = (request.params as { uri?: unknown } | undefined)?.uri;
+    if (typeof uri === 'string' && uri.startsWith('ui://')) {
+      return {
+        contents: [{ uri, mimeType: 'text/html;profile=mcp-app', text: NO_CONFIG_UI_PAGE }]
+      };
+    }
+    throw new ResourceNotFoundError(String(uri ?? ''));
+  });
+  server.server.setRequestHandler('prompts/list', async () => ({ prompts: [] }));
+}
+
 export function buildServer(ctx: ToolContext, surface: SurfaceId, observe?: (connectorName: string, version: string, instructions: string, tools: PluginToolSchema[]) => void, liveContext: () => ToolContext = () => ctx): McpServer {
   if (surface === 'core') ctx = withManagedSkills(ctx);
   const definition = surfaceDefinition(surface);
   const instructions = serverInstructions(ctx, surface);
   const server = new McpServer(
     { name: definition.serverName, version: APP_VERSION },
-    { capabilities: { tools: {} }, instructions }
+    { capabilities: { tools: {}, resources: {}, prompts: {} }, instructions }
   );
 
   const tools: PluginToolSchema[] = [];
   if (surface === 'plugins') {
     const declarations = registerPluginTools(server);
+    registerDiscoveryHandlers(server);
     observe?.(definition.connectorName, APP_VERSION, instructions, declarations);
     return server;
   }
@@ -72,6 +104,7 @@ export function buildServer(ctx: ToolContext, surface: SurfaceId, observe?: (con
   }
 
   observe?.(definition.connectorName, APP_VERSION, instructions, tools);
+  registerDiscoveryHandlers(server);
   return server;
 }
 
