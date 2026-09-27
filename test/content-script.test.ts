@@ -10311,14 +10311,15 @@ describe('how a turn is recorded as having ended', () => {
   });
 
   // Native Chrome shape captured 2026-09-12, with private conversation content omitted.
-  function thinkingFailed(section: HTMLElement): HTMLButtonElement {
-    const button = live!.document.createElement('button');
-    button.type = 'button'; button.setAttribute('aria-expanded', 'false');
+  function thinkingFailed(section: HTMLElement, layout = 'button'): HTMLElement {
+    const button = live!.document.createElement(layout === 'button' ? 'button' : 'div');
+    if (layout === 'button') { button.setAttribute('type', 'button'); button.setAttribute('aria-expanded', 'false'); }
+    else button.className = 'group/activity-header relative inline-flex';
     button.textContent = 'Thinking failed';
     section.append(button);
     return button;
   }
-  async function failedThinkingTurn() {
+  async function failedThinkingTurn(layout = 'button') {
     live = await harness();
     // The generic harness advances time for incidental asynchronous waits. This
     // boundary test owns its wall clock explicitly, down to the last millisecond.
@@ -10329,13 +10330,13 @@ describe('how a turn is recorded as having ended', () => {
     const section = assistantTurn(live.document, 'failed-thinking-page-turn', []);
     live.hook.observe(); await settle();
     const id = emitted(live.sent, 'turn_start').at(-1)!.event.turnId as string;
-    const button = thinkingFailed(section);
+    const button = thinkingFailed(section, layout);
     stopGenerating(live.document);
     live.hook.observe(); await settle();
     return { section, button, id };
   }
-  it('closes Thinking failed immediately, once, without inventing a final answer', async () => {
-    const { id } = await failedThinkingTurn();
+  it.each(['button', 'activity-header'])('closes Thinking failed immediately, once, without inventing a final answer (%s)', async layout => {
+    const { id } = await failedThinkingTurn(layout);
     expect(emitted(live!.sent, 'turn_end').map(row => row.event)).toEqual([
       expect.objectContaining({ turnId: id, outcome: 'failed', reason: 'thinking_failed' })]);
     live!.advance(330_000); live!.hook.observe(); await settle();
@@ -10412,15 +10413,15 @@ describe('how a turn is recorded as having ended', () => {
     expect(emitted(live!.sent, 'turn_start').at(-1)?.event.turnId).not.toBe(id);
     expect(emitted(live!.sent, 'turn_end')).toHaveLength(1);
   });
-  it.each(['historical', 'quoted', 'hidden', 'user', 'own-ui'])('does not let a %s Thinking failed header fail the live turn', async location => {
+  it.each(['button', 'activity-header'].flatMap(layout => ['historical', 'quoted', 'hidden', 'user', 'own-ui'].map(location => ({layout, location}))))('does not let a $location Thinking failed header fail the live turn ($layout)', async ({layout, location}) => {
     live = await harness();
     const old = assistantTurn(live.document, 'reused-page-id', []);
-    if (location === 'historical') thinkingFailed(old);
+    if (location === 'historical') thinkingFailed(old, layout);
     live.hook.observe(); await settle();
     startGenerating(live.document);
     const current = assistantTurn(live.document, 'reused-page-id', []);
     if (location !== 'historical') {
-      const button = thinkingFailed(current);
+      const button = thinkingFailed(current, layout);
       if (location === 'quoted') { const md = live.document.createElement('div'); md.className = 'markdown'; current.append(md); md.append(button); }
       if (location === 'hidden') button.hidden = true;
       if (location === 'user') userTurn(live.document, 'quote', 'Quoted header', { sent: false }).append(button);
@@ -20744,6 +20745,28 @@ describe('ordinary Continue native recovery', () => {
   const chat = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
   const id = '11111111-2222-4333-8444-555555555555';
   const text = 'Continue until fully finished. Tur Tur Sahur.';
+  it.each([false, true])('distinguishes unchanged tool attribution from new work during recovery (new work: %s)', async newWork => {
+    live = await harness(`https://chatgpt.com/c/${chat}`);
+    userTurn(live.document, 'source', 'Complete the task');
+    startGenerating(live.document, { send: false });
+    const section = assistantTurn(live.document, 'native-answer', []);
+    live.hook.observe(); await settle();
+    const calls = [{ messageId: 'completed-tool', tool: 'read', requestId: 'request-source', answered: false }];
+    const turn = { index: 0, conversationId: chat, turnId: 'native-answer', endMessageId: null, calls, messages: [] };
+    await bindFiberTurns([{section, turn}]);
+    const inspect = () => live!.runtimeMessage({type: 'clf-repair-check', conversationId: chat, draftOnly: true}) as Promise<{revision:number}>;
+    const before = await inspect();
+    if (newWork) calls.push({ messageId: 'new-tool', tool: 'read', requestId: 'request-next', answered: false });
+    // Use the production recovery reader's ownerless scan, then the ordinary owner
+    // scan. Their published attribution differs; only new semantic work revokes Send.
+    await replyFiber([], [turn], {pageTurnId:'native-answer', pageTurn:section});
+    await bindFiberTurns([{section, turn}]);
+    const after = await inspect();
+    expect(after.revision - before.revision).toBe(newWork ? 1 : 0);
+    const publications = emitted(live.sent, 'tool_evidence').map(row=>row.event.turnId);
+    expect(publications).toContain(undefined);
+    expect(publications.at(-1)).toBe(publications[0]);
+  });
   it.each(['idle', 'busy'] as const)('repairs a %s Continue whose fresh page-model scan cannot map the latest assistant turn', async scenario => {
     live = await harness(`https://chatgpt.com/c/${chat}`, {
       desktop_input: message => ({ ok: true, data: message.recoveryAction || message.authorize || message.ack || message.fail

@@ -1599,11 +1599,12 @@ var CLF_DOM = (() => {
       for (const turn of turns()) {
         if (turn.role !== 'assistant') continue;
         for (const section of turnNodes(turn)) {
-          // Native Pro failure header observed in Chrome, 2026-09-12: an
-          // expandable button outside authored markdown, not an alert/Retry card.
+          // Native Pro failure headers: the older expandable button and the
+          // non-button activity header observed in Chrome on 2026-09-27.
+          // Match the provider header, never arbitrary prose containing its text.
           // Keep every occurrence's node identity; old failed turns remain rendered.
-          for (const button of section.querySelectorAll('button[aria-expanded]')) {
-            if (button.closest(`${OWN_SURFACES}, .markdown, [data-message-author-role="user"], [hidden], [inert], [aria-hidden="true"]`) ||
+          for (const button of section.querySelectorAll('button[aria-expanded], [class~="group/activity-header"]')) {
+            if (button.closest(`${OWN_SURFACES}, .markdown, [data-markdown-text-style="assistant-message"], [data-message-author-role="user"], [hidden], [inert], [aria-hidden="true"]`) ||
                 button.closest(TURN) !== section || !displayed(button) ||
                 (button.textContent || '').trim() !== 'Thinking failed') continue;
             let hidden = false;

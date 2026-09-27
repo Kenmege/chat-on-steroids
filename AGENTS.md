@@ -947,8 +947,8 @@ Navigation, a newer question, an occupied draft or a first MCP call during prepa
 revoke delivery. A claimed browser correction never also enters a tool result. After-turn
 entries retain their source-boundary policy and never acquire interruption authority.
 
-Native **Thinking failed** is recognized only by its exact visible disclosure button inside the
-current assistant turn, excluding quoted Markdown, old turns and app UI. It immediately records
+Native **Thinking failed** is recognized only by its exact visible disclosure button or native
+activity header inside the current assistant turn, excluding quoted Markdown, old turns and app UI. It immediately records
 failed `turn_end` with structured `thinking_failed` reason and releases ordinary manual browser
 input. This is a failed view, not a successful final and not automatic queue-delivery authority.
 Fresh exact MCP/native-tool/interim work can immediately reopen the same durable generation.
@@ -2053,6 +2053,12 @@ Continue also refreshes the current native assistant response before recovery St
 before and after asynchronous Send authorization. Its exact final message vetoes Continue
 even when the browser journal has not reached the app or a stale Stop control remains.
 A final from before the latest native question cannot veto recovery of that newer question.
+Ownerless recovery scans and ordinary owned scans may republish the same tool's attribution.
+That metadata change must not advance the browser's actual-work revision and cancel its own
+Continue. Track the last semantic call evidence observed for the local owner separately from
+the last publication; a genuinely new call or result first seen ownerless must still advance
+the revision when its exact local owner is resolved.
+<!-- RELOCATED-TO: /Users/kenmege/.claude/doctrine-archive/20260927-cos-native-failure-header.md -->
 
 A trusted native Stop click immediately blocks automatic page input, without emitting a terminal
 observation while native generation continues. Authorized app Stop records the same local intent

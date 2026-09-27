@@ -4252,6 +4252,7 @@
         pageConversation &&
         pageConversation !== askedConversation
       );
+      let freshCallWork = false;
       const fresh = turn.calls.filter((call) => {
         // A mismatched owned turn is admissible only as a provisional-first-turn candidate.
         // Its request id must have survived the app's explicit owner read-back before the
@@ -4263,12 +4264,19 @@
         ) return false;
         const owner = index === activeTurnIndex ? activeLocalTurnId || '' : '';
         const signature = `${call.tool}\u0000${call.requestId || ''}\u0000${call.answered ? '1' : '0'}\u0000${owner}`;
-        if (callsReported.get(call.messageId) === signature) return false;
-        callsReported.set(call.messageId, signature);
+        const previous = callsReported.get(call.messageId);
+        if (previous?.signature === signature) return false;
+        // Recovery's ownerless probe and the ordinary owned scan both publish
+        // attribution. Only semantic work not yet observed for this local owner
+        // advances the quiet-source fence. Preserve that evidence across an
+        // ownerless scan, including new calls first discovered by that scan.
+        const progressSignature = owner ? signature : previous?.progressSignature;
+        if (owner && previous?.progressSignature !== signature) freshCallWork = true;
+        callsReported.set(call.messageId, { signature, progressSignature });
         return true;
       });
       if (fresh.length > 0) {
-        if (generating && index === activeTurnIndex) noteTurnProgress();
+        if (freshCallWork && generating && index === activeTurnIndex) noteTurnProgress();
         emit({
           kind: 'tool_evidence',
           ...(index === activeTurnIndex ? { turnId: activeLocalTurnId } : {}),
