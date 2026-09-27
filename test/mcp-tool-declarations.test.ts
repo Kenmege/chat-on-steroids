@@ -24,6 +24,24 @@ async function rpc(handler: ReturnType<typeof createMcpHandler>, method: string,
   return JSON.parse(text.startsWith('{') ? text : [...text.matchAll(/^data: (.+)$/gm)].at(-1)![1]!);
 }
 
+it('publishes the actual Core code-mode operations and refreshes discovery after capability changes', async () => {
+  const publish = async (command: boolean) => {
+    const ctx: ToolContext = { roots: [], caps: { ...DEFAULT_CAPABILITIES, read: true, command },
+      readOnly: false, sessionTools: false, agentTools: false, exposedFinishTool: false };
+    const handler = createMcpHandler(() => buildServer(ctx, 'core'));
+    try { return (await rpc(handler, 'tools/list')).result.tools as Array<{ name: string; description: string }>; }
+    finally { await handler.close(); }
+  };
+  for (const command of [false, true, false]) {
+    const tools = await publish(command);
+    const description = tools.find(tool => tool.name === 'exec')!.description;
+    const names = description.split(' Available operations: ')[1]?.split('.')[0]?.split(', ');
+    expect(names).toEqual(tools.filter(tool => tool.name !== 'exec').map(tool => tool.name));
+    expect(names?.includes('exec_command')).toBe(command);
+    expect(description).toContain('a successful nested call must not be repeated directly');
+  }
+});
+
 it('shares declaration work but evicts the previous dynamic description instead of accumulating generations', () => {
   let builds = 0;
   const declaration = (key: string) => toolDeclaration('cache-fixture', () => ({ value: ++builds }), key);

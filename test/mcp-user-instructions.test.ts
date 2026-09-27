@@ -28,6 +28,7 @@ const { MAX_MCP_INSTRUCTIONS_CHARS, defaultConfig, getConfig, initConfigPath, sa
   '../src/main/config.js'
 );
 const { serverInstructions } = await import('../src/main/mcp/instructions.js');
+const { pluginManager } = await import('../src/main/plugins/manager.js');
 const { makeTempDir, removeTempDir } = await import('./helpers.js');
 const { CAPABILITIES } = await import('../src/shared/types.js');
 type Capabilities = import('../src/shared/types.js').Capabilities;
@@ -71,6 +72,27 @@ afterEach(() => {
 });
 
 describe('the user’s own connector instructions', () => {
+  it('discovers enabled plugin tools from the live exposure without requiring tool names in the user task', () => {
+    const exposed = vi.spyOn(pluginManager, 'tools').mockReturnValue([
+      { name: 'fabric_route', inputSchema: { type: 'object' } },
+      { name: 'read_file', inputSchema: { type: 'object' } },
+    ]);
+    const text = serverInstructions(ctx, 'core', 'darwin');
+    expect(text).toContain('Enabled plugin tools: fabric_route, read_file.');
+    expect(text).toContain('The user does not need to name a connector or tool');
+    expect(text).toContain('text(await tools.exec_command({cmd: command}))');
+    exposed.mockReturnValue([]);
+    expect(serverInstructions(ctx, 'core', 'darwin')).not.toContain('Enabled plugin tools:');
+    expect(serverInstructions({ ...ctx, readOnly: true }, 'core', 'darwin'))
+      .not.toContain('text(await tools.exec_command({cmd: command}))');
+  });
+
+  it('distinguishes execution through code mode from a proposal to execute again', () => {
+    for (const surface of ['core', 'desktop'] as const) {
+      expect(serverInstructions(ctx, surface, 'darwin')).toContain('A successful tools call inside exec has already executed');
+    }
+  });
+
   it.each([
     [true, true, false, 'file writing and exec_command'],
     [true, false, false, 'file writing'],

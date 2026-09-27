@@ -449,6 +449,12 @@ before opening preparation; provider-cached initialize instructions remain a sna
 
 ### `exec({code})` composes tools; it is not a shell
 
+Code-mode discovery lists the registered operations, using the same declaration cache
+identity as its current tool-name set. Core instructions identify currently exposed
+plugin names and explain discovering Core exec when a partial tool search returned only
+read. Never present disabled registrations as enabled, route every trivial operation
+through a routing tool, or replay a successful nested call as a direct call. This guidance
+improves discovery; only a live ordinary-task run proves model use without tool-name coaching.
 Code mode offers top-level await, `tools.<name>(args)`, `Promise.all`, `text(...)` and `image(...)`
 within one surface. Evaluation requires exact request/conversation/durable-session proof or
 the user's `allowUnattributedCalls` setting. Composition itself owns no chat state; children

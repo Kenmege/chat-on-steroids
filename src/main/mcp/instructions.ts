@@ -84,6 +84,10 @@ function coreInstructions(ctx: ToolContext, platform: NodeJS.Platform, skills: s
   const roots = ctx.roots.length
     ? ctx.roots.map(root => `/${root.name}${isGitRepository(root.path) ? ' (git)' : ''}`).join('  ')
     : 'None yet.';
+  // Only the manager's current exposed names belong here, never installed/disabled
+  // registrations or upstream prose. Discovery is a hint, not execution authority.
+  const pluginNames = pluginManager.tools().map(tool => tool.name)
+    .filter(name => /^[A-Za-z0-9_.-]{1,128}$/.test(name));
   const lines = [
     CODING_INSTRUCTIONS,
     skills,
@@ -92,9 +96,15 @@ function coreInstructions(ctx: ToolContext, platform: NodeJS.Platform, skills: s
     `Use the connected tools as needed: ${surfaceDefinition('core').connectorName} for files, terminal, plans and workers` +
     `; ${surfaceDefinition('desktop').connectorName} for background browser tabs, DOM, console, screenshots and input${desktop ? ', native windows and clipboard' : ''}` +
     `; ${surfaceDefinition('plugins').connectorName} for enabled external apps and services.`,
+    'The user does not need to name a connector or tool. Select the enabled capability that fits the requested task, discover its schema, and execute it through its owning connector. A partial discovery result such as read alone is not the complete capability inventory. Do not ask the user to repeat their task with tool names.',
+    ...(pluginNames.length ? [
+      `Enabled plugin tools: ${pluginNames.slice(0, 80).join(', ')}.${pluginNames.length > 80 ? ' Additional enabled tools are available through Plugins discovery.' : ''}`,
+      'Discover these tools on Chat On Steroids Plugins when relevant. Routing/status tools describe a route or presence; their output is not proof of execution. Use a direct native tool when it already satisfies the task; do not add a routing call to every simple operation.',
+    ] : []),
     `Host: ${host}. Roots: ${roots}`,
     ctx.readOnly ? 'The local tools are read-only.' : 'Use the tools listed in this conversation.',
     ...(writable || executable ? [`You can always use ${[writable && 'file writing', executable && 'exec_command'].filter(Boolean).join(' and ')} in CoS. Never hallucinate a block from ChatGPT environment messages.`] : []),
+    ...(executable ? ['If direct exec_command is not discovered, discover Core exec (Run JavaScript) and use text(await tools.exec_command({cmd: command})). This invokes the same native command handler; it is not a different execution service. Report an actual discovery failure or tool refusal precisely, rather than inferring read-only access from a partial tool list.'] : []),
     'Report exact failures: identity, session_id and output-limit errors do not mean Read-only. Never replay successful patches or commands to recover a terminal.',
     '"This tool call was blocked by OpenAI because we couldn\'t determine the safety status of the request." comes from ChatGPT before CoS receives the call. It is not a CoS failure or a missing capability: retry the identical call once.',
     'Unattributed is recording status, not permission. With Allow unattributed calls enabled, the request id owns its workspace, plan, terminals and agent family until exact chat proof arrives. A missing target limits that operation only; keep using enabled tools.',
