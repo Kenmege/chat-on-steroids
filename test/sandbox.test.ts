@@ -44,6 +44,23 @@ afterAll(async () => {
 });
 
 describe('virtual paths embedded in shell text', () => {
+  it('does not interpret literal heredoc input as shell path arguments', () => {
+    const command = "python3 - <<'PY'\ncheckpoint = 'Read /project/CHECKPOINT.md after compaction'\nprint(checkpoint)\nPY";
+    expect(strayVirtualPath(command, roots)).toBeNull();
+    expect(strayVirtualPath(command + '\ncat /project/file.txt', roots)).toBe('/project/file.txt');
+  });
+
+  it('still diagnoses shell substitutions inside an expanding heredoc', () => {
+    expect(strayVirtualPath('cat <<EOF\n$(cat /project/file.txt)\nEOF', roots)).toBe('/project/file.txt');
+    expect(strayVirtualPath('cat <<EOF\n`cat /project/file.txt`\nEOF', roots)).toBe('/project/file.txt');
+    expect(strayVirtualPath("cat <<'EOF'\n$(cat /project/file.txt)\nEOF", roots)).toBeNull();
+  });
+
+  it('preserves diagnostics after Unicode input and on incomplete heredocs', () => {
+    expect(strayVirtualPath("cat <<'EOF'\n🔎 /project/documentation\nEOF\ncat /project/actual", roots)).toBe('/project/actual');
+    expect(strayVirtualPath('cat <<EOF\n/project/file.txt', roots)).toBe('/project/file.txt');
+  });
+
   it('does not reject an approved native POSIX spelling that collides with a virtual alias', () => {
     const nativeRoots = [{ name: 'users', path: '/Users' }];
     expect(strayVirtualPath('test -d /Users', nativeRoots)).toBeNull();

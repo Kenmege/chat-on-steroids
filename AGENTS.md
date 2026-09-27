@@ -647,6 +647,11 @@ therefore disables command execution. External plugin servers likewise retain th
 service authority; the local file sandbox does not contain them. User-selected native upload
 staging is a separate explicit-input boundary, not general model filesystem permission.
 
+The shell virtual-path diagnostic is a dialect hint, not authorization. Literal heredoc
+stdin belongs to the invoked program and must not be scanned as shell path arguments.
+Executable substitutions in expanding heredocs still receive the diagnostic; incomplete
+shell syntax keeps the conservative scan. Command policy and filesystem guards are unchanged.
+
 Negative cases matter: accepted virtual/native in-root paths, rejected traversal and symlink
 escapes, live revocation during an await, and preserving an unrelated user's newer file edit.
 

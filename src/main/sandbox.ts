@@ -14,6 +14,8 @@
 
 import { rawPromises as fs, rawRealpathNative } from './rawfs.js';
 import path from 'node:path';
+import Parser from 'tree-sitter';
+import Bash from 'tree-sitter-bash';
 import type { Root } from '../shared/types.js';
 
 const IS_WINDOWS = process.platform === 'win32';
@@ -501,6 +503,30 @@ export async function validateNewRoot(folderPath: string, existing: readonly Roo
  */
 export function strayVirtualPath(text: string, roots: readonly Root[]): string | null {
   if (typeof text !== 'string' || roots.length === 0) return null;
+  // Heredoc bodies are stdin data, not shell path arguments. Scanning embedded
+  // Python or checkpoint prose invents shell semantics for another language.
+  // Only quoted delimiters guarantee literal data. Expanding heredocs retain
+  // the conservative scan (including backtick substitutions); command policy and
+  // filesystem authorization remain independent of this path-dialect diagnostic.
+  if (text.includes('<<')) {
+    const parser = new Parser();
+    parser.setLanguage(Bash as unknown as Parser.Language);
+    const tree = parser.parse(text);
+    if (tree && !tree.rootNode.hasError) {
+      const masked = text.split('');
+      const visit = (node: Parser.SyntaxNode): void => {
+        if (node.type === 'heredoc_body') {
+          const delimiter = node.parent?.namedChildren.find(child => child.type === 'heredoc_start');
+          if (!delimiter || !/['"\\]/.test(delimiter.text)) return;
+          for (let i = node.startIndex; i < node.endIndex; i++) masked[i] = ' ';
+          return;
+        }
+        for (const child of node.namedChildren) visit(child);
+      };
+      visit(tree.rootNode);
+      text = masked.join('');
+    }
+  }
   const names = new Set(roots.map((root) => root.name.toLowerCase()));
   // A candidate must start the string or follow whitespace or an opening quote/bracket:
   // anything else in front of it means it is part of a longer token, not a path.
