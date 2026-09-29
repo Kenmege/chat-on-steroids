@@ -3091,12 +3091,13 @@ production renderer in isolated Electron with color, queue/push, theme, reset, r
 layout checks. It does not operate the installed app or a provider conversation.
 
 `renderer/plugin-refresh-reminder.ts` owns the chat-header reminder to refresh plugins
-in ChatGPT. Its X stores only the acknowledged running `state.update.current` version in
-`cos.plugins.refreshReminder.dismissedVersion`; downloading a newer version does not rearm
-it. No acknowledgement shows the reminder, including the first version with this feature.
-It survives restart until dismissed, returns for a different running version and is hidden
-in Settings. It stacks with update/extension notices and never marks an actual connector
-refresh complete or starts a browser action.
+in ChatGPT. It persists acknowledged declaration fingerprints per surface in
+`cos.plugins.refreshReminder.acknowledgedSchemas`; the first observation is a silent baseline.
+A changed declaration remains visible until dismissed or the refresh owner projects an exact
+durable completion for that declaration. Verified completion advances the baseline, so a later
+tool change reminds again. An older completion cannot clear a newer schema's reminder.
+The reminder is hidden in Settings and stacks with independent update/extension notices.
+Dismissal never marks an actual connector refresh complete or starts a browser action.
 
 ### Project Files workspace
 
@@ -3231,6 +3232,9 @@ unsupported/manual-required stays visible instead of opening more helper tabs.
 An explicit successful Plugin Restart may rearm matching unclaimed, non-manual, unfinished
 refresh debt with a fresh request ID. The existing serialized ledger publishes that ID before
 waking browser work; ordinary status polling and a closed helper do not grant another attempt.
+An unclaimed failure hold belongs to the app version plus its shipped extension build, allowing
+a repaired reader in a same-version package to retry discovery. The same reader retains its
+failure limit across restarts; claimed or manual-required work is never rearmed by a build change.
 Installer ownership lasts through child `close`, retaining the existing deadline and teardown.
 
 ### Connections, tunnels and diagnostics

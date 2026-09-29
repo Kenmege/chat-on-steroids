@@ -5,6 +5,7 @@ import { wakeBrowserWork } from './browser-wake.js';
 import { logInfo, logWarn } from './logger.js';
 import { surfaceDefinition } from './mcp/surfaces.js';
 import { APP_VERSION } from './version.js';
+import { shippedExtensionBuild } from './extension-path.js';
 import { PLUGIN_MAX_TOOLS } from './plugins/exposure.js';
 import type { PluginPublication, PluginRefreshRequest, PluginSurface, PluginToolSchema } from '../shared/plugin-refresh.js';
 
@@ -36,6 +37,17 @@ let tunnelGraceMs = PLUGIN_REFRESH_TUNNEL_GRACE_MS;
  */
 export const PLUGIN_REFRESH_FAILURE_LIMIT = 3;
 let chain: Promise<unknown> = Promise.resolve();
+let committedRows: Row[] = [];
+async function persistRows(current: Row[]): Promise<void> {
+  await writeDurableNow('plugin-refresh', current);
+  committedRows = structuredClone(current);
+}
+// The page reader can be repaired in a same-version package. A version alone would
+// keep that repair behind a failure recorded by the old extension forever.
+const readerIdentity = () => {
+  const build = shippedExtensionBuild();
+  return build ? `${APP_VERSION}:${build}` : APP_VERSION;
+};
 function serial<T>(work: () => Promise<T>): Promise<T> { const result = chain.then(work, work); chain = result.catch(() => undefined); return result; }
 async function rows(): Promise<Row[]> {
   const result = z.array(rowSchema).max(3).parse(await readDurable('plugin-refresh') ?? []);
@@ -49,11 +61,12 @@ async function rows(): Promise<Row[]> {
   // A park records what this build could not do. Every row parked on 2026-09-26/27 failed
   // because the extension could not read ChatGPT's new plugin page, and without a schema change
   // or a manual Restart the update that learned to read it would never have been tried.
-  for (const row of result) if (row.parked && row.parkedBy !== APP_VERSION) {
+  for (const row of result) if (row.parked && row.parkedBy !== readerIdentity() && !row.attempted && !row.manual) {
     row.id = randomUUID(); delete row.parked; delete row.parkedBy; delete row.failures; delete row.error; repaired = true;
-    logInfo(`plugin refresh unparked surface=${row.surface} for app ${APP_VERSION}`);
+    logInfo(`plugin refresh unparked surface=${row.surface} for reader ${readerIdentity()}`);
   }
-  if (repaired) await writeDurableNow('plugin-refresh', result);
+  if (repaired) await persistRows(result);
+  else committedRows = structuredClone(result);
   return result;
 }
 function canonical(value: unknown): string {
@@ -134,6 +147,13 @@ export function publishPluginSurface(surface: PluginSurface, connectorName: stri
 }
 export function unpublishPluginSurface(surface: PluginSurface): void { publications.delete(surface); }
 export function pluginRefreshPublications(): PluginPublication[] { return structuredClone([...publications.values()]); }
+/** Project only durable, exact-schema readback; publication or a click is not completion. */
+export function completedPluginRefreshSchemas(): Partial<Record<PluginSurface, string>> {
+  return Object.fromEntries(committedRows
+    .filter(row => row.completedSchemaId === row.schemaId && publications.get(row.surface)?.schemaId === row.schemaId)
+    .map(row => [row.surface, row.schemaId]));
+}
+export function restorePluginRefresh(): Promise<void> { return serial(async () => { await rows(); }); }
 /** One fresh browser attempt after an explicit Restart, only before any Refresh claim. */
 export function rearmPluginRefresh(surface: PluginSurface): Promise<boolean> {
   return serial(async () => {
@@ -146,7 +166,7 @@ export function rearmPluginRefresh(surface: PluginSurface): Promise<boolean> {
     delete row.failures;
     delete row.parked;
     delete row.parkedBy;
-    await writeDurableNow('plugin-refresh', current);
+    await persistRows(current);
     wakeBrowserWork();
     return true;
   });
@@ -169,7 +189,7 @@ export function pendingPluginRefreshes(): Promise<PluginRefreshRequest[]> {
       changed = true;
     }
     if (changed) {
-      await writeDurableNow('plugin-refresh', current);
+      await persistRows(current);
       logInfo(`plugin refresh pending observed ${current.filter(row => !row.manual && row.completedSchemaId !== row.schemaId).map(row => `surface=${row.surface} schema=${row.schemaId.slice(0, 12)} dueInMs=${Math.max(0, (settling.get(row.surface)?.readyAt ?? 0) - Date.now())}`).join(' ')}`);
     }
     return current.flatMap(row => {
@@ -216,7 +236,7 @@ export function claimPluginRefresh(input: Identity & Enrollment & { alreadyCurre
     // Enrollment/migration may find the installed declaration already current. Record
     // that observation without clicking Refresh or manufacturing a new plugin version.
     if (input.alreadyCurrent) row.completedSchemaId = row.schemaId;
-    await writeDurableNow('plugin-refresh', current); return true;
+    await persistRows(current); return true;
   });
 }
 /**
@@ -237,7 +257,7 @@ export function requireManualPluginRefresh(input: Identity & Enrollment & { erro
     row.appId = input.appId;
     row.manual = true;
     row.error = input.error.slice(0, 200);
-    await writeDurableNow('plugin-refresh', current);
+    await persistRows(current);
     logWarn(`plugin refresh requires manual action surface=${row.surface}: ${row.error}`);
     return true;
   });
@@ -248,7 +268,7 @@ export function completePluginRefresh(input: Identity & { tools: unknown; versio
     if (!row || row.manual || !row.attempted || row.appId !== input.appId || !matches(input.tools, publications.get(row.surface)!.tools, row.surface)) return false;
     row.completedSchemaId = row.schemaId; delete row.error;
     if (input.versionId) row.versionId = input.versionId.slice(0, 200);
-    await writeDurableNow('plugin-refresh', current); return true;
+    await persistRows(current); return true;
   });
 }
 export function failPluginRefresh(input: { id: string; error: string }): Promise<boolean> {
@@ -261,12 +281,12 @@ export function failPluginRefresh(input: { id: string; error: string }): Promise
     row.error = input.error.slice(0, 200);
     row.failures = (row.failures ?? 0) + 1;
     if (row.failures >= PLUGIN_REFRESH_FAILURE_LIMIT && !row.parked) {
-      row.parked = true; row.parkedBy = APP_VERSION;
+      row.parked = true; row.parkedBy = readerIdentity();
       logWarn(`plugin refresh parked surface=${row.surface} after ${row.failures} failed attempts: ${row.error}`);
     }
-    await writeDurableNow('plugin-refresh', current); return true;
+    await persistRows(current); return true;
   });
 }
 /** Tests that are not about tunnel timing publish surfaces as if their tunnel were long live. */
 export function setPluginRefreshTunnelGraceForTests(ms: number): void { tunnelGraceMs = ms; }
-export function resetPluginRefreshForTests(): void { for (const row of settling.values()) if (row.timer) clearTimeout(row.timer); settling.clear(); publications.clear(); chain = Promise.resolve(); }
+export function resetPluginRefreshForTests(): void { for (const row of settling.values()) if (row.timer) clearTimeout(row.timer); settling.clear(); publications.clear(); committedRows = []; chain = Promise.resolve(); }

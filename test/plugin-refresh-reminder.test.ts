@@ -61,3 +61,19 @@ it('dismisses only the reminder and leaves simultaneous extension or update noti
   expect(document.getElementById('pluginRefreshReminder')!.hidden).toBe(true);
   expect(update.hidden).toBe(false);
 });
+
+it('clears verified schemas only, survives reload and reminds again for the next change', async () => {
+  let { paintPluginRefreshReminder: paint } = await import('../src/renderer/plugin-refresh-reminder.js');
+  const notice = document.getElementById('pluginRefreshReminder')!;
+  paint({ core: 'c1', desktop: 'd1' });
+  paint({ core: 'c2', desktop: 'd2' }, { core: 'c2', desktop: 'd1' });
+  expect(notice.hidden).toBe(false);
+  paint({ core: 'c2', desktop: 'd2' }, { core: 'c2', desktop: 'd2' });
+  expect(notice.hidden).toBe(true);
+  vi.resetModules();
+  ({ paintPluginRefreshReminder: paint } = await import('../src/renderer/plugin-refresh-reminder.js'));
+  paint({ core: 'c2', desktop: 'd2' });
+  expect(notice.hidden).toBe(true);
+  paint({ core: 'c2', desktop: 'd3' }, { core: 'c2', desktop: 'd2' });
+  expect(notice.hidden).toBe(false);
+});

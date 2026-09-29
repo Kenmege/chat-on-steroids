@@ -1178,7 +1178,7 @@ function apply(next: AppState): void {
 
   // ---- out of date, app or extension
   paintUpdate(next);
-  paintPluginRefreshReminder(next.connectorSchemas ?? {});
+  paintPluginRefreshReminder(next.connectorSchemas ?? {}, next.connectorRefreshCompleted ?? {});
 
   // ---- health numbers and facts
   paintClock();

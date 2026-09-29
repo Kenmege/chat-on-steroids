@@ -5,12 +5,16 @@ import { initDurableStore, resetDurableForTests, readDurable, writeDurableNow } 
 import { PLUGIN_REFRESH_FAILURE_LIMIT, claimPluginRefresh, requireManualPluginRefresh, completePluginRefresh, failPluginRefresh, pendingPluginRefreshes, pluginRefreshPublications, publishPluginSurface, rearmPluginRefresh, resetPluginRefreshForTests, setPluginRefreshTunnelGraceForTests, PLUGIN_REFRESH_TUNNEL_GRACE_MS, unpublishPluginSurface } from '../src/main/plugin-refresh.js';
 import { makeTempDir, removeTempDir } from './helpers.js';
 import { APP_VERSION } from '../src/main/version.js';
+import { completedPluginRefreshSchemas, restorePluginRefresh } from '../src/main/plugin-refresh.js';
+import { setShippedExtensionBuildForTest } from '../src/main/extension-path.js';
 import { buildServer } from '../src/main/mcp/tools.js';
 import { defaultConfig } from '../src/main/config.js';
 import type { PluginToolSchema } from '../src/shared/plugin-refresh.js';
 const appId = 'asdk_app_example';
 const tools: PluginToolSchema[] = [{ name: 'read', description: 'Read a file', inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } }];
 let directory = '';
+beforeEach(() => setShippedExtensionBuildForTest(null));
+afterEach(() => setShippedExtensionBuildForTest());
 beforeEach(async () => { vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] }); wake.mockClear(); resetPluginRefreshForTests(); setPluginRefreshTunnelGraceForTests(0); resetDurableForTests(); directory = await makeTempDir(); initDurableStore(directory); });
 afterEach(async () => { resetPluginRefreshForTests(); resetDurableForTests(); await removeTempDir(directory); vi.useRealTimers(); });
 const publish = (version = '1', declarations = tools) => { publishPluginSurface('core', 'Chat On Steroids Core', version, 'Instructions', declarations); vi.advanceTimersByTime(20_000); };
@@ -307,6 +311,63 @@ it('tries a parked schema once more after an app update', async () => {
   expect(retried).toHaveLength(1);
   expect(retried[0]!.id).not.toBe(request.id);
   expect((await readDurable('plugin-refresh') as any[])[0]).not.toHaveProperty('failures');
+});
+it('reobserves after a same-version reader repair, but keeps the failure limit for that reader', async () => {
+  setShippedExtensionBuildForTest('old-reader');
+  publishPlugins(tools);
+  const first = (await pendingPluginRefreshes())[0]!;
+  for (let i = 0; i < PLUGIN_REFRESH_FAILURE_LIMIT; i++) await failPluginRefresh({ id: first.id, error: 'Unreadable card' });
+  expect(await pendingPluginRefreshes()).toEqual([]);
+  expect((await readDurable('plugin-refresh') as any[])[0].parkedBy).toBe(`${APP_VERSION}:old-reader`);
+  setShippedExtensionBuildForTest('new-reader');
+  const next = (await pendingPluginRefreshes())[0]!;
+  expect(next.id).not.toBe(first.id);
+  expect(await claimPluginRefresh({ id: first.id, appId, connectorName: 'Chat On Steroids Plugins', tools, alreadyCurrent: true })).toBe(false);
+  for (let i = 0; i < PLUGIN_REFRESH_FAILURE_LIMIT; i++) await failPluginRefresh({ id: next.id, error: 'Still unreadable' });
+  resetPluginRefreshForTests(); publishPlugins(tools);
+  expect(await pendingPluginRefreshes()).toEqual([]);
+});
+it('does not replay an already claimed refresh after a reader update', async () => {
+  setShippedExtensionBuildForTest('old-reader'); publish();
+  const first = (await pendingPluginRefreshes())[0]!;
+  expect(await claim(first)).toBe(true);
+  for (let i = 0; i < PLUGIN_REFRESH_FAILURE_LIMIT; i++) await failPluginRefresh({ id: first.id, error: 'Readback missing' });
+  setShippedExtensionBuildForTest('new-reader');
+  expect(await pendingPluginRefreshes()).toEqual([]);
+  expect((await readDurable('plugin-refresh') as any[])[0]).toMatchObject({ id: first.id, attempted: true, parked: true });
+});
+it('projects only matching durable completion and withdraws it when the publication changes', async () => {
+  publish(); const request = (await pendingPluginRefreshes())[0]!;
+  expect(completedPluginRefreshSchemas()).toEqual({});
+  expect(await claim(request)).toBe(true);
+  expect(completedPluginRefreshSchemas()).toEqual({});
+  expect(await completePluginRefresh({ ...request, appId, tools })).toBe(true);
+  expect(completedPluginRefreshSchemas()).toEqual({ core: request.schemaId });
+  resetPluginRefreshForTests(); await restorePluginRefresh(); publish();
+  expect(completedPluginRefreshSchemas()).toEqual({ core: request.schemaId });
+  publish('same-version', [{ ...tools[0]!, description: 'New schema' }]);
+  expect(completedPluginRefreshSchemas()).toEqual({});
+});
+it('does not publish optimistic completion while its durable write is pending', async () => {
+  publish(); const request = (await pendingPluginRefreshes())[0]!;
+  expect(await claim(request)).toBe(true);
+  const durable = await import('../src/main/durable.js');
+  const realWrite = durable.writeDurableNow;
+  let entered!: () => void, release!: () => void;
+  const writing = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const spy = vi.spyOn(durable, 'writeDurableNow').mockImplementationOnce(async (name, value) => {
+    entered(); await gate; await realWrite(name, value);
+  });
+  const completion = completePluginRefresh({ ...request, appId, tools });
+  try {
+    await writing;
+    expect(completedPluginRefreshSchemas()).toEqual({});
+  } finally { release(); }
+  try {
+    expect(await completion).toBe(true);
+    expect(completedPluginRefreshSchemas()).toEqual({ core: request.schemaId });
+  } finally { spy.mockRestore(); }
 });
 it('enrolls a stale connector by a tunnel this app serves, never by the page alone', async () => {
   // Measured 2026-09-27: Desktop showed 4 stale tools and Plugins none; names never matched.

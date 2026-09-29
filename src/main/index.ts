@@ -48,6 +48,7 @@ import {
 } from './agents.js';
 import { flushDurable, initDurableStore, readDurable, writeDurableNow, writeDurableSoon } from './durable.js';
 import { initControlApiPath, shutdownControlApi, startControlApi } from './control-api.js';
+import { restorePluginRefresh } from './plugin-refresh.js';
 import { restoreRequestCorrelations } from './session/correlation.js';
 import { restoreBlockedChats } from './session/blocked-chats.js';
 import { stopComputerHelper } from './computer/index.js';
@@ -339,6 +340,8 @@ void app.whenReady().then(async () => {
   catch (error) { logWarn(`Skills library unavailable: ${error instanceof Error ? error.message : String(error)}`); }
   initDurableStore(userData);
   initControlApiPath(userData);
+  try { await restorePluginRefresh(); }
+  catch (error) { logWarn(`Connector refresh state unavailable: ${error instanceof Error ? error.message : String(error)}`); }
   initUvRuntime(userData);
   // Bundled pet packages: the packaged app's resources, or the repository's pets/ folder in dev.
   try { await initPetLibrary(userData, app.isPackaged ? path.join(process.resourcesPath, 'pets') : path.join(app.getAppPath(), 'pets')); }
