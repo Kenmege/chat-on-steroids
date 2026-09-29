@@ -6815,7 +6815,16 @@
     // refused, so nothing this app types may drive it on). 'continued' is neither — that chat
     // is finished, and its controls are moot rather than fenced.
     const fenced = blocked === 'worker' || blocked === 'blocked';
+    // `auto` is the proactive policy for this exact chat. Healthy Pro keeps that false so a
+    // long reasoning turn is never interrupted merely for crossing the threshold. The user's
+    // switch is `configuredAuto`: when it is on, an exact oversized `Thinking failed` still
+    // owns a durable rollover ticket. Older app builds sent only `auto`, so keep that as the
+    // compatibility fallback instead of painting a switch nobody configured.
     const auto = Boolean(context && context.auto) && !fenced;
+    const configuredAuto = Boolean(
+      context && (typeof context.configuredAuto === 'boolean' ? context.configuredAuto : context.auto)
+    ) && !fenced;
+    const failureRecovery = configuredAuto && !auto && Boolean(context && context.failureRecovery);
     const threshold = context && context.threshold > 0 ? context.threshold : 0;
     // One setting, one control. The app sends the mode beside `enabled`, so there is a single
     // value to read and the slider can only ever be in one of its three positions.
@@ -6850,7 +6859,9 @@
       // Two short lines rather than a sentence: this is read while reaching for something
       // else, and the only questions it answers are "is it on" and "at what point".
       tip: [
-        auto
+        failureRecovery
+          ? t('content_failed_pro_recovery', 'Auto-recovery on after a failed Pro turn')
+          : configuredAuto
           ? t('content_auto_compaction_on', 'Auto-compaction on$1', from ? `, ${from}` : '')
           : t('content_auto_compaction_off', 'Auto-compaction off'),
         blocked === 'worker'
@@ -6884,10 +6895,12 @@
               ? t('content_auto_compaction_worker_off', 'off here: worker chats never auto-compact')
               : blocked === 'blocked'
                 ? t('content_auto_compaction_blocked_off', 'off here: this chat is blocked in the app')
-                : auto
+                : failureRecovery
+                  ? t('content_failed_pro_recovery_note', 'healthy Pro stays manual; Thinking failed rolls over')
+                  : configuredAuto
                   ? from || t('content_auto_compaction_threshold_app', 'threshold set in the app')
                   : t('content_auto_compaction_manual', 'compact this chat by hand'),
-          on: auto,
+          on: configuredAuto,
           warn: false,
           disabled: fenced
         }
@@ -7196,7 +7209,14 @@
     const limit = number(raw.limit);
     const threshold = number(raw.threshold);
     if (limit <= 0) return null;
-    return { auto: raw.auto === true, threshold, warn, limit };
+    return {
+      auto: raw.auto === true,
+      configuredAuto: typeof raw.configuredAuto === 'boolean' ? raw.configuredAuto : raw.auto === true,
+      failureRecovery: raw.failureRecovery === true,
+      threshold,
+      warn,
+      limit
+    };
   }
 
   /**
@@ -7229,7 +7249,9 @@
           ? 'near'
           : 'ok';
     // One compact line is enough in the composer. The meter itself already conveys the rest.
-    const status = t(
+    const status = !context.auto && context.configuredAuto && context.failureRecovery
+      ? t('content_meter_recovery_status', '$1/$2 · failure rollover on', [roundK(tokens), roundK(ceiling)])
+      : t(
       'content_meter_status',
       '$1/$2 · autocompact $3',
       [roundK(tokens), roundK(ceiling), context.auto ? t('content_on', 'on') : t('content_off', 'off')]

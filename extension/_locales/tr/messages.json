@@ -1,4 +1,7 @@
 {
+  "content_failed_pro_recovery": { "message": "Başarısız Pro turundan sonra otomatik kurtarma açık" },
+  "content_failed_pro_recovery_note": { "message": "Çalışan Pro elle yönetilir; düşünme hatasında yeni sohbete geçilir" },
+  "content_meter_recovery_status": { "message": "$1/$2 · hata sonrası kurtarma açık" },
   "content_app_did_not_answer": {
     "message": "Uygulama yanıt vermedi."
   },

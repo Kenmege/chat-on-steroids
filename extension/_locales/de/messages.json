@@ -1,4 +1,7 @@
 {
+  "content_failed_pro_recovery": { "message": "Automatische Wiederaufnahme nach fehlgeschlagenem Pro-Durchlauf" },
+  "content_failed_pro_recovery_note": { "message": "Laufendes Pro bleibt manuell; Denkfehler startet einen neuen Chat" },
+  "content_meter_recovery_status": { "message": "$1/$2 · Wiederaufnahme bei Fehler aktiv" },
   "content_app_did_not_answer": {
     "message": "Die App hat nicht geantwortet."
   },

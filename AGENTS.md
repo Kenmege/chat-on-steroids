@@ -2319,6 +2319,9 @@ Neither action may spill into another local session merely because labels or tim
 
 ## 15. Compact & Resume: same session, new frontend
 
+<!-- RELOCATED-TO: /Users/kenmege/.claude/doctrine-archive/20260929-cos-failure-recovery-policy.md -->
+<!-- JUSTIFIED: Preserve the superseded healthy-Pro wording verbatim while documenting the exact failed-turn recovery exception. -->
+
 **Intent:** preserve one local session S, its project, history, input queue, prime/worker family
 and terminal custody while changing the provider binding **S: A → B**. Compaction is not a new
 task and must not turn source A into an independently recoverable chat.
@@ -2340,8 +2343,15 @@ awaiting-summary -> awaiting-chat -> claimed -> committing -> committed
    chat has live work. Recent MCP activity attributed to this exact current session/frontend
    qualifies through the existing activity grant even when the page reports no turn. Recheck
    that grant after reads; expired/future grants, canonical finals, Stop, dismissed pages and
-   superseded frontends cannot earn a ticket. Idle old history does not start it. Workers and exact Pro are excluded
-   from automatic compaction; workers do not self-compact, and Pro may compact manually.
+   superseded frontends cannot earn a ticket. Idle old history does not start it. Workers and healthy exact Pro are excluded
+   from proactive automatic compaction; workers do not self-compact, and Pro may compact manually.
+   An exact terminal `thinking_failed` above the configured threshold earns a durable
+   `thinking-failed` continuation, including Pro. Auto Off, refusal, Stop, blocked/worker
+   ownership, active tools, new questions and newer turns still veto it. Restore and checkpoint
+   reads retain that trigger; healthy Pro never gains interruption authority from this exception.
+   If the ticket's exact bound source-summary prompt also Thinking fails, reconstruct a bounded
+   handoff from the durable ledger (user requirements, tool summaries and task plan), without
+   raw tool payloads. Recheck source/ticket identity and policy after ledger reads before sending.
    A transport error may also trigger it for the exact latest failed turn above the threshold.
    The failure must remain the latest work boundary, without a final, new question or reopened
    turn. Binding, policy and source proof are rechecked after reads; old/unscoped banners and

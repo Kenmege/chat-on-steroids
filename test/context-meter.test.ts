@@ -17,10 +17,10 @@ function setup(model: string, reasoningEffort: 'high' | 'pro' = 'high') {
   paintContextMeter(session, config);
   return dom.window.document;
 }
-it('keeps Pro static and identifies token estimates and compaction exclusion', () => {
+it('keeps Pro static and identifies token estimates and failure-only recovery', () => {
   const doc = setup('gpt-6', 'pro');
   expect(doc.getElementById('contextMeterArc')?.getAttribute('stroke-dasharray')).toBe('0 37.7');
-  expect(doc.getElementById('contextMeterInfo')?.textContent).toContain('Auto-compaction off for Pro');
+  expect(doc.getElementById('contextMeterInfo')?.textContent).toContain('Failed Pro turns recover above the compaction threshold');
   expect(doc.getElementById('contextMeterButton')?.getAttribute('aria-label')).toContain('estimated');
   expect(doc.getElementById('contextTokens')?.textContent).toBe('100K');
   // Pro has no configured limit or share: the rows say so instead of showing a number.

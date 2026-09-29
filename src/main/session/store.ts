@@ -1084,7 +1084,7 @@ export function automaticCompactionAllowed(summary?: SessionSummary | null): boo
     !(selected?.conversationId === summary?.conversationId && isProModel(selected?.model, selected?.reasoningEffort));
 }
 
-export function autoCompactionReady(
+function compactionLevelReady(
   summary: SessionSummary | null | undefined,
   /**
    * This chat is demonstrably working right now, so the stored refusal no longer describes it.
@@ -1116,7 +1116,16 @@ export function autoCompactionReady(
   if (refusal?.conversationId === summary.conversationId &&
       (summary.activeTurnId ? summary.activeTurnId === refusal.turnId : !working)) return false;
   const config = getConfig().compaction;
-  return automaticCompactionAllowed(summary) && config.autoTokens > 0 && summary.contextTokens >= config.autoTokens;
+  return config.autoTokens > 0 && summary.contextTokens >= config.autoTokens;
+}
+
+export function autoCompactionReady(summary: SessionSummary | null | undefined, working = false): boolean {
+  return automaticCompactionAllowed(summary) && compactionLevelReady(summary, working);
+}
+
+/** Exact terminal failure recovery preserves Auto Off, refusal and threshold policy. */
+export function failedTurnCompactionReady(summary: SessionSummary | null | undefined): boolean {
+  return getConfig().compaction.auto && compactionLevelReady(summary);
 }
 
 /** Persist eligibility before retiring the ticket, so a restart cannot refile the refused turn. */

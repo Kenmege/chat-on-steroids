@@ -48,10 +48,13 @@ function handoffPlanNotice(plan: AgentPlan | null): string {
  */
 export function resumeBootstrapText(summary: string, token = ''): string {
   const identity = destinationContinuationMarker(token);
+  const reconstructed = summary.startsWith('RECOVERY HANDOFF — reconstructed from the durable session ledger.\n');
+  const provenance = reconstructed
+    ? 'This brief was reconstructed from the durable session ledger after the previous chat failed; verify current state before acting.'
+    : 'This is the brief the previous chat wrote about its own work; carry on from it rather than starting again.';
   return (
     (identity ? `${identity}\n\n` : '') +
-    'Continuing a Chat On Steroids session that was compacted. This is the brief the previous chat wrote about ' +
-    'its own work; carry on from it rather than starting again.\n\n' +
+    `Continuing a Chat On Steroids session that was compacted. ${provenance}\n\n` +
     summary
   );
 }
@@ -160,7 +163,7 @@ export async function prepareHandoff(input: PrepareHandoffInput): Promise<Handof
   // Freeze the actual saved plan with the brief. A pointer to the removed session
   // tool cannot supply it to the replacement model. Budget this same snapshot once.
   const planNotice = handoffPlanNotice(await readSessionPlan(input.sessionId));
-  const overhead = resumeBootstrapText('', input.continuationToken).length + planNotice.length;
+  const overhead = resumeBootstrapText(text, input.continuationToken).length - text.length + planNotice.length;
   text = boundBrief(text, MAX_CHATGPT_MESSAGE_CHARS - overhead);
   // Checked again here, and not only at the bridge route that can word the refusal well,
   // because this is the one function that writes a handoff to disk. A stub that reaches the

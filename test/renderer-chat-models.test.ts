@@ -207,9 +207,9 @@ it('renders the two observed Pro generations separately and sends their exact se
   slider.value = '1'; slider.dispatchEvent(new dom.window.Event('input'));
   expect(dom.window.document.getElementById('composerModelLabel')!.textContent).toBe('GPT-5.6 Pro');
   expect(confirmedComposerModel()).toEqual({ model: 'gpt-5.6-sol', reasoningEffort: 'pro' });
-  expect(dom.window.document.getElementById('contextMeterInfo')!.textContent).toContain('Auto-compaction off for Pro');
+  expect(dom.window.document.getElementById('contextMeterInfo')!.textContent).toContain('Failed Pro turns recover above the compaction threshold');
   dom.window.document.querySelector<HTMLButtonElement>('[data-model="gpt-6-pro"]')!.click();
-  expect(dom.window.document.getElementById('contextMeterInfo')!.textContent).toContain('Auto-compaction off for Pro');
+  expect(dom.window.document.getElementById('contextMeterInfo')!.textContent).toContain('Failed Pro turns recover above the compaction threshold');
   expect(dom.window.document.getElementById('contextMeterArc')!.getAttribute('stroke-dasharray')).toBe('0 37.7');
   expect(dom.window.document.getElementById('composerModelLabel')!.textContent).toBe('GPT-6 Pro');
   // Pro-only model: one effort, so no slider; the menu names it instead.

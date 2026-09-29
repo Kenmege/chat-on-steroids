@@ -179,6 +179,13 @@ export function normalizeProjectId(value: unknown): string | null {
 }
 
 type RequestedModel = { model: string; reasoningEffort: ReasoningEffort | null };
+export type ContinuationTrigger = 'manual' | 'threshold' | 'thinking-failed';
+
+function continuationTrigger(value: unknown, automatic: boolean): ContinuationTrigger {
+  return value === 'manual' || value === 'threshold' || value === 'thinking-failed'
+    ? value
+    : automatic ? 'threshold' : 'manual';
+}
 
 function requestedModel(value: unknown): RequestedModel | null {
   if (!value || typeof value !== 'object') return null;
@@ -215,6 +222,8 @@ interface Continuation {
   sourceProgress: number;
   /** Auto-compaction ticket: survives page/retry clocks until commit or explicit Off/cancel. */
   automatic: boolean;
+  /** Durable reason this transaction exists; failure recovery is allowed to cross the Pro fence. */
+  trigger: ContinuationTrigger;
   /** When the brief request first went on its way; the automatic clock starts here. */
   askedAt: number | null;
   state: ContinuationState;
@@ -272,6 +281,8 @@ interface ContinuationRecord {
   sourceProgress?: number;
   /** Absent in records written before durable auto-compaction tickets existed. */
   automatic?: boolean;
+  /** Absent in legacy records; derived from `automatic` when missing. */
+  trigger?: ContinuationTrigger;
   /** Absent in records written before automatic handovers had a deadline. */
   askedAt?: number | null;
   /** Absent in records written before Project affinity was carried; null means the site root. */
@@ -306,6 +317,7 @@ function durableRecord(entry: Continuation): ContinuationRecord {
     touchedAt: entry.touchedAt,
     sourceProgress: entry.sourceProgress,
     automatic: entry.automatic,
+    trigger: entry.trigger,
     askedAt: entry.askedAt,
     project: entry.project,
     state: entry.state,
@@ -361,6 +373,7 @@ function publishRecord(entry: Continuation, record: ContinuationRecord): void {
   entry.touchedAt = Math.max(entry.touchedAt, record.touchedAt ?? record.openedAt);
   entry.sourceProgress = record.sourceProgress ?? 0;
   entry.automatic = record.automatic === true;
+  entry.trigger = continuationTrigger(record.trigger, entry.automatic);
   entry.state = record.state;
   entry.summary = record.summary;
   entry.handoffId = record.handoffId;
@@ -428,6 +441,7 @@ export function setContinuationRecoveryHooks(hooks: ContinuationRecoveryHooks): 
 
 export interface ContinuationView {
   requestedModel: RequestedModel | null;
+  sourceTurnId: string | null;
   touchedAt: number;
   token: string;
   sessionId: string;
@@ -438,6 +452,7 @@ export interface ContinuationView {
   error: string | null;
   openedAt: number;
   automatic: boolean;
+  trigger: ContinuationTrigger;
   /** When the brief request first went on its way, or null while it has not. */
   askedAt: number | null;
   /** The Project the replacement chat belongs in, or null for the site root. */
@@ -448,6 +463,7 @@ export interface ContinuationView {
 
 const view = (entry: Continuation): ContinuationView => ({
   requestedModel: requestedModel(entry.requestedModel),
+  sourceTurnId: entry.sourceTurnId,
   touchedAt: entry.touchedAt,
   token: entry.token,
   sessionId: entry.sessionId,
@@ -458,6 +474,7 @@ const view = (entry: Continuation): ContinuationView => ({
   error: entry.error,
   openedAt: entry.openedAt,
   automatic: entry.automatic,
+  trigger: entry.trigger,
   askedAt: entry.askedAt,
   project: entry.project,
   sourceSend: { ...entry.sourceSend },
@@ -734,7 +751,13 @@ export async function repairPrimeFromResumeShadow(conversationId: string): Promi
  * one already running. That is deliberate — the previous design let each press become its
  * own handoff and its own fresh tab.
  */
-function makeContinuation(sessionId: string, fromConversationId: string, automatic: boolean, project: string | null): Continuation {
+function makeContinuation(
+  sessionId: string,
+  fromConversationId: string,
+  automatic: boolean,
+  project: string | null,
+  trigger: ContinuationTrigger
+): Continuation {
   return {
     requestedModel: null,
     sourceTurnId: null,
@@ -746,6 +769,7 @@ function makeContinuation(sessionId: string, fromConversationId: string, automat
     touchedAt: Date.now(),
     sourceProgress: 0,
     automatic,
+    trigger,
     askedAt: null,
     state: 'awaiting-summary',
     summary: '',
@@ -765,7 +789,9 @@ export async function openContinuationNow(
   sessionId: string,
   fromConversationId: string,
   automatic = false,
-  project: string | null = null
+  project: string | null = null,
+  trigger?: ContinuationTrigger,
+  sourceTurnId?: string | null
 ): Promise<ContinuationView> {
   sweep();
   const existing = [...byToken.values()].find((entry) => entry.sessionId === sessionId && isOpen(entry));
@@ -776,9 +802,16 @@ export async function openContinuationNow(
   const work = (async (): Promise<ContinuationView> => {
     const again = [...byToken.values()].find((entry) => entry.sessionId === sessionId && isOpen(entry));
     if (again) return view(again);
-    const entry = makeContinuation(sessionId, fromConversationId, automatic, normalizeProjectId(project));
+    const resolvedTrigger = continuationTrigger(trigger, automatic);
+    const entry = makeContinuation(
+      sessionId,
+      fromConversationId,
+      resolvedTrigger !== 'manual',
+      normalizeProjectId(project),
+      resolvedTrigger
+    );
     const source = await getSession(sessionId);
-    entry.sourceTurnId = source?.activeTurnId ?? null;
+    entry.sourceTurnId = typeof sourceTurnId === 'string' && sourceTurnId ? sourceTurnId : source?.activeTurnId ?? null;
     if (source?.conversationId === fromConversationId && source.selectedModel?.conversationId === fromConversationId) {
       entry.requestedModel = requestedModel(source.selectedModel);
     }
@@ -1586,6 +1619,7 @@ export async function restoreContinuations(snapshot: ContinuationSnapshot | null
       sourceProgress: Number.isSafeInteger(raw.sourceProgress) && raw.sourceProgress! >= 0 && raw.sourceProgress! <= 4_000_000 ? raw.sourceProgress! : 0,
       touchedAt: Number.isFinite(raw.touchedAt) && raw.touchedAt! >= raw.openedAt && raw.touchedAt! <= now ? Number(raw.touchedAt) : raw.openedAt,
       automatic: raw.automatic === true,
+      trigger: continuationTrigger(raw.trigger, raw.automatic === true),
       askedAt: null,
       state: raw.state,
       summary: typeof raw.summary === 'string' ? raw.summary.slice(0, 512 * 1024) : '',

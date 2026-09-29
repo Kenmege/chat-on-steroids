@@ -1,4 +1,7 @@
 {
+  "content_failed_pro_recovery": { "message": "Pro 回合失败后自动恢复已开启" },
+  "content_failed_pro_recovery_note": { "message": "正常 Pro 保持手动；思考失败时转入新对话" },
+  "content_meter_recovery_status": { "message": "$1/$2 · 失败后续接已开启" },
   "content_app_did_not_answer": {
     "message": "应用未响应。"
   },

@@ -550,6 +550,10 @@ async function startOpenAiTunnel(opts: TunnelStartOptions): Promise<TunnelHandle
     current = run;
 
     const rejectAuthentication = (): void => {
+      // This terminal state retires the child, so its exit handler intentionally stays quiet.
+      // Persist the verdict before retirement; otherwise a later missing tunnel has no cause
+      // in the Activity log after restart. Never log the provider payload or credentials.
+      logWarn(`${opts.label ?? 'core'} tunnel stopped: control-plane authentication rejected; reconnect requires valid account and tunnel credentials`);
       stopped = true;
       current = null;
       clearTimer();

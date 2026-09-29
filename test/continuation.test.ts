@@ -164,6 +164,50 @@ describe('capturing the brief', () => {
     expect(continuationByToken(opened.token)?.requestedModel).toEqual({ model: 'gpt-5.6-sol', reasoningEffort: 'high' });
   });
 
+  it('persists the exact failed-turn rollover trigger and source through restart', async () => {
+    const summary = await createSession({ title: 'failed-turn rollover', conversationId: CHAT_A });
+    await store.appendEvent(summary.id, { time: 1, source: 'extension', kind: 'turn_start', turnId: 'failed-pro-turn' });
+    await store.appendEvent(summary.id, {
+      time: 2, source: 'extension', kind: 'turn_end', turnId: 'failed-pro-turn',
+      outcome: 'failed', reason: 'thinking_failed'
+    });
+    const opened = await openContinuationNow(
+      summary.id,
+      CHAT_A,
+      true,
+      null,
+      'thinking-failed',
+      'failed-pro-turn'
+    );
+    expect(opened).toMatchObject({
+      automatic: true,
+      trigger: 'thinking-failed',
+      sourceTurnId: 'failed-pro-turn'
+    });
+
+    const snapshot = snapshotContinuations();
+    resetContinuationsForTests();
+    await restoreContinuations(snapshot);
+    expect(continuationByToken(opened.token)).toMatchObject({
+      automatic: true,
+      trigger: 'thinking-failed',
+      sourceTurnId: 'failed-pro-turn'
+    });
+  });
+
+  it('maps legacy continuation snapshots onto explicit manual and threshold triggers', async () => {
+    const manual = await createSession({ title: 'legacy manual', conversationId: CHAT_A });
+    const automatic = await createSession({ title: 'legacy automatic', conversationId: CHAT_B });
+    const manualTicket = await openContinuationNow(manual.id, CHAT_A, false);
+    const automaticTicket = await openContinuationNow(automatic.id, CHAT_B, true);
+    const snapshot = snapshotContinuations();
+    for (const entry of snapshot.entries) delete (entry as { trigger?: unknown }).trigger;
+    resetContinuationsForTests();
+    await restoreContinuations(snapshot);
+    expect(continuationByToken(manualTicket.token)?.trigger).toBe('manual');
+    expect(continuationByToken(automaticTicket.token)?.trigger).toBe('threshold');
+  });
+
   it('does not borrow selection from another conversation or invent missing effort', async () => {
     const summary = await createSession({ title: 'source evidence', conversationId: CHAT_A });
     await store.observeSessionModel(summary.id, CHAT_A, 'gpt-5.6-sol', 10);

@@ -14,6 +14,7 @@
   "One request, without automatic continuation.": "自動継続なしで1件のリクエストを実行します。",
   "Continue until this objective is satisfied.": "この目標が達成されるまで続けます。",
   "Keep working within the brief until paused.": "一時停止するまで依頼の範囲内で作業を続けます。",
+  "Failed Pro turns recover above the compaction threshold": "圧縮しきい値を超えた Pro ターンは失敗後に復旧します",
   "By model": "モデル別",
   "By day": "日別",
   "Code": "コード",

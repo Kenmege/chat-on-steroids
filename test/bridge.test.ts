@@ -102,7 +102,7 @@ const {
   setGoalObjective
 } = await import('../src/main/goal.js');
 const { completeProcessCall, createSession, deleteSession, findSessionByConversation, getSession,
-  initSessionStore, readEvents, recordProcessCall, resetSessionStoreForTests } = await import(
+  initSessionStore, readEvents, readHandoff, recordProcessCall, resetSessionStoreForTests } = await import(
   '../src/main/session/store.js'
 );
 const sessionStoreModule = await import('../src/main/session/store.js');
@@ -160,6 +160,7 @@ const {
 const { makeTempDir, removeTempDir, SAMPLE_BRIEF, faultGate } = await import('./helpers.js');
 const { resumeBootstrapText } = await import('../src/main/session/handoff.js');
 const { getLog } = await import('../src/main/logger.js');
+const { nativeHandoffPrompt } = await import('../src/main/session/handoff-prompt.js');
 const { setShippedExtensionBuildForTest } = await import('../src/main/extension-path.js');
 
 const EXTENSION_ORIGIN = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop';
@@ -2357,6 +2358,138 @@ describe('automatic compaction', () => {
     }
   });
 
+  it.each(['auto-off', 'below-threshold', 'blocked', 'running-tool', 'new-question', 'new-turn', 'stopped', 'completed'])(
+    'does not recover an oversized Pro failure across %s', async scenario => {
+      await pair();
+      const conversationId = randomUUID();
+      await withThreshold(scenario === 'below-threshold' ? 1_000_000 : 10_000, async () => {
+        const config = getConfig();
+        if (scenario === 'auto-off') await saveConfig({ ...config, compaction: { ...config.compaction, auto: false } });
+        if (scenario === 'blocked') setChatBlocked(conversationId, true);
+        let release = () => {};
+        let held: Promise<void> = Promise.resolve();
+        try {
+          if (scenario === 'running-tool') {
+            const { trackInFlight, emptyEvidence } = await import('../src/main/mcp/call-context.js');
+            held = trackInFlight({ startedAt: Date.now(), transportKey: null, agent: null, outcome: null,
+              evidence: emptyEvidence(), caller: { conversationId, requestId: 'failure-held-tool', transportKey: null } },
+              () => new Promise<void>(resolve => { release = resolve; }));
+          }
+          const created = await request('POST', '/events', { body: { conversationId, events: [
+            { kind: 'model_selection', model: 'GPT-6 Pro', time: Date.now() },
+            { kind: 'turn_start', time: Date.now(), turnId: 'failure-boundary' }, ...over(),
+            { kind: 'turn_end', time: Date.now(), turnId: 'failure-boundary',
+              outcome: ['stopped', 'completed'].includes(scenario) ? scenario : 'failed', reason: 'thinking_failed' },
+            { kind: 'chat_error', time: Date.now(), turnId: 'failure-boundary', reason: 'thinking_failed', recoverable: false, text: 'Thinking failed' },
+            ...(scenario === 'new-question' ? [{ kind: 'user_message', time: Date.now(), messageId: 'new-request', text: 'A different task' }] : []),
+            ...(scenario === 'new-turn' ? [{ kind: 'turn_start', time: Date.now(), turnId: 'new-work' }] : [])
+          ] } });
+          await settled();
+          expect(continuationForSession(created.body.sessionId)).toBeNull();
+        } finally { release(); await held; setChatBlocked(conversationId, false); }
+      });
+    });
+
+  it('files a durable rollover for an exact oversized Pro Thinking failed turn', async () => {
+    await pair();
+    const conversationId = 'a1a1a1a1-0000-4000-8000-00000000acf0';
+    await withThreshold(10_000, async () => {
+      const created = await request('POST', '/events', { body: { conversationId, events: [
+        { kind: 'model_selection', model: 'gpt-5.6-pro', reasoningEffort: 'pro', time: Date.now() },
+        { kind: 'turn_start', time: Date.now(), turnId: 'failed-pro-turn' },
+        ...over(),
+        { kind: 'turn_end', time: Date.now(), turnId: 'failed-pro-turn', outcome: 'failed', reason: 'thinking_failed' },
+        { kind: 'chat_error', time: Date.now(), turnId: 'failed-pro-turn', reason: 'thinking_failed',
+          recoverable: false, text: 'Thinking failed' }
+      ] } });
+      const sessionId = created.body.sessionId as string;
+      await vi.waitFor(() => expect(continuationForSession(sessionId)).toMatchObject({
+        from: conversationId,
+        automatic: true,
+        trigger: 'thinking-failed',
+        sourceTurnId: 'failed-pro-turn',
+        state: 'awaiting-summary'
+      }), { timeout: 3000 });
+      const ticket = continuationForSession(sessionId)!;
+
+      const activity = await request('GET', `/activity?conversationId=${conversationId}`);
+      expect(activity.body.context).toMatchObject({
+        auto: false,
+        configuredAuto: true,
+        failureRecovery: true
+      });
+      expect(activity.body.job).toMatchObject({
+        automatic: true,
+        trigger: 'thinking-failed',
+        stage: 'handoff-pending'
+      });
+      expect(continuationForSession(sessionId)?.token).toBe(ticket.token);
+
+      const attempt = await request('POST', '/compact', {
+        body: { conversationId, token: ticket.token, sourceAttempt: true }
+      });
+      expect(attempt.status).toBe(200);
+      expect(attempt.body.allowed).toBe(true);
+      expect(continuationForSession(sessionId)).toMatchObject({
+        trigger: 'thinking-failed',
+        sourceSend: { state: 'attempted-unresolved' }
+      });
+    });
+  });
+
+  it('reconstructs a durable handoff when the oversized failure-recovery brief also Thinking fails', async () => {
+    await pair();
+    const conversationId = 'a1a1a1a1-0000-4000-8000-00000000acf1';
+    await withThreshold(10_000, async () => {
+      const created = await request('POST', '/events', { body: { conversationId, events: [
+        { kind: 'model_selection', model: 'gpt-5.6-pro', reasoningEffort: 'pro', time: Date.now() },
+        { kind: 'turn_start', time: Date.now(), turnId: 'original-failed-pro' },
+        { kind: 'user_message', time: Date.now(), turnId: 'original-failed-pro', messageId: 'original-question',
+          text: `Keep the installed agent mesh and finish the durable compaction fix. ${'x'.repeat(44_000)}` },
+        { kind: 'turn_end', time: Date.now(), turnId: 'original-failed-pro', outcome: 'failed', reason: 'thinking_failed' },
+        { kind: 'chat_error', time: Date.now(), turnId: 'original-failed-pro', reason: 'thinking_failed',
+          recoverable: false, text: 'Thinking failed' }
+      ] } });
+      const sessionId = created.body.sessionId as string;
+      await vi.waitFor(() => expect(continuationForSession(sessionId)?.trigger).toBe('thinking-failed'), { timeout: 3000 });
+      const ticket = continuationForSession(sessionId)!;
+      expect((await request('POST', '/compact', {
+        body: { conversationId, token: ticket.token, sourceAttempt: true }
+      })).status).toBe(200);
+      expect((await request('POST', '/compact', {
+        body: { conversationId, token: ticket.token, sourceDispatch: true }
+      })).status).toBe(200);
+
+      const handoffMessageId = 'failed-handoff-prompt';
+      expect((await request('POST', '/compact', {
+        body: { conversationId, token: ticket.token, sourceMessageId: handoffMessageId }
+      })).status).toBe(200);
+      await request('POST', '/events', { body: { conversationId, events: [
+        { kind: 'user_message', time: Date.now(), turnId: 'handoff-failed-turn', messageId: handoffMessageId,
+          text: nativeHandoffPrompt(ticket.token) },
+        { kind: 'turn_start', time: Date.now(), turnId: 'handoff-failed-turn' },
+        { kind: 'turn_end', time: Date.now(), turnId: 'handoff-failed-turn', outcome: 'failed', reason: 'thinking_failed' },
+        { kind: 'chat_error', time: Date.now(), turnId: 'handoff-failed-turn', reason: 'thinking_failed',
+          recoverable: false, text: 'Thinking failed' }
+      ] } });
+
+      await vi.waitFor(() => expect(continuationByToken(ticket.token)).toMatchObject({
+        trigger: 'thinking-failed',
+        state: 'awaiting-chat',
+        handoffId: expect.any(String)
+      }), { timeout: 3000 });
+      const session = (await getSession(sessionId))!;
+      const handoff = await readHandoff(sessionId, continuationByToken(ticket.token)!.handoffId!);
+      expect(handoff?.text).toContain('Emergency handoff reconstructed from the durable Chat On Steroids ledger');
+      expect(handoff?.text).toContain('Keep the installed agent mesh and finish the durable compaction fix');
+      expect(resumeJobFor(sessionId)).toMatchObject({
+        trigger: 'thinking-failed',
+        handoffId: session.lastHandoffId,
+        stage: expect.stringMatching(/opening|waiting-for-browser/)
+      });
+    });
+  });
+
   it('observes Astra per chat, refuses automatic tickets, and preserves manual compaction', async () => {
     await pair();
     const conversationId = 'a1a1a1a1-0000-4000-8000-00000000ac90';
@@ -2367,7 +2500,7 @@ describe('automatic compaction', () => {
       ] } });
       await settled();
       const activity = await request('GET', `/activity?conversationId=${conversationId}`);
-      expect(activity.body.context.auto).toBe(false);
+      expect(activity.body.context).toMatchObject({ auto: false, configuredAuto: true, failureRecovery: true });
       expect(continuationForSession(activity.body.sessionId)).toBeNull();
       const automatic = await request('POST', '/compact', { body: { conversationId, ticket: true, automatic: true } });
       expect(automatic.status).not.toBe(202);

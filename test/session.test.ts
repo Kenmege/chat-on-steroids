@@ -32,6 +32,7 @@ import {
 import {
   appendEvent,
   autoCompactionReady,
+  failedTurnCompactionReady,
   observeSessionModel,
   createSession,
   deleteSession,
@@ -1994,6 +1995,7 @@ describe('session store', () => {
       expect(autoCompactionReady(await getSession(summary.id))).toBe(true);
       await observeSessionModel(summary.id, 'conv-astra', 'GPT-6 Pro', 200);
       expect(autoCompactionReady(await getSession(summary.id))).toBe(false);
+      expect(failedTurnCompactionReady(await getSession(summary.id))).toBe(true);
       // A delayed old receipt and a foreign document are neither the current selection.
       await observeSessionModel(summary.id, 'conv-astra', 'gpt-6-sol', 100);
       await observeSessionModel(summary.id, 'other-chat', 'gpt-6-sol', 300);
@@ -2007,15 +2009,39 @@ describe('session store', () => {
       expect(autoCompactionReady(await getSession(summary.id))).toBe(true);
       await observeSessionModel(summary.id, 'conv-astra', 'gpt-6-astra', 500);
       expect(autoCompactionReady(await getSession(summary.id))).toBe(false);
+      expect(failedTurnCompactionReady(await getSession(summary.id))).toBe(true);
       await observeSessionModel(summary.id, 'conv-astra', 'gpt-5.6-pro', 510);
       expect(autoCompactionReady(await getSession(summary.id))).toBe(false);
+      expect(failedTurnCompactionReady(await getSession(summary.id))).toBe(true);
       await observeSessionModel(summary.id, 'conv-astra', 'gpt-5.6-sol', 520, 'pro');
       expect(autoCompactionReady(await getSession(summary.id))).toBe(false);
+      expect(failedTurnCompactionReady(await getSession(summary.id))).toBe(true);
       await observeSessionModel(summary.id, 'conv-astra', 'gpt-6', 530, 'pro');
       expect(autoCompactionReady(await getSession(summary.id))).toBe(false);
+      expect(failedTurnCompactionReady(await getSession(summary.id))).toBe(true);
       await observeSessionModel(summary.id, 'conv-astra', 'gpt-5.6-sol', 600);
       expect(autoCompactionReady(await getSession(summary.id))).toBe(true);
     } finally { await saveConfig(base); }
+  });
+
+  it('keeps failed-turn rollover behind the global switch and threshold', async () => {
+    const base = defaultConfig();
+    const summary = await createSession({ title: 'failed-turn rollover', conversationId: 'conv-failed-rollover' });
+    await appendEvent(summary.id, {
+      time: Date.now(), source: 'extension', kind: 'user_message', messageId: 'failed-u',
+      message: { text: 'x'.repeat(44_000), chars: 44_000, truncated: false }
+    });
+    await observeSessionModel(summary.id, 'conv-failed-rollover', 'gpt-5.6-pro', 20, 'pro');
+    try {
+      await saveConfig({ ...base, compaction: { ...base.compaction, auto: true, autoTokens: 50_000 } });
+      expect(failedTurnCompactionReady(await getSession(summary.id))).toBe(false);
+      await saveConfig({ ...base, compaction: { ...base.compaction, auto: true, autoTokens: 10_000 } });
+      expect(failedTurnCompactionReady(await getSession(summary.id))).toBe(true);
+      await saveConfig({ ...base, compaction: { ...base.compaction, auto: false, autoTokens: 10_000 } });
+      expect(failedTurnCompactionReady(await getSession(summary.id))).toBe(false);
+    } finally {
+      await saveConfig(base);
+    }
   });
 
   it('keeps automatic compaction ready above the line across interrupted and later turns', async () => {

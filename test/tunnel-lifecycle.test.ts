@@ -84,6 +84,7 @@ vi.mock('node:fs', async (importOriginal) => {
 });
 
 const { startTunnel } = await import('../src/main/tunnel/index.js');
+const { getLog } = await import('../src/main/logger.js');
 
 const settings = {
   kind: 'openai' as const,
@@ -148,6 +149,7 @@ describe('OpenAI tunnel process ownership', () => {
   ])('stops once for a genuine control-plane authorization rejection: %s', async line => {
     vi.useFakeTimers();
     const reports: any[] = [];
+    const before = getLog().filter(row => row.message.includes('control-plane authentication rejected')).length;
     const handle = await startTunnel({ localUrl: 'http://127.0.0.1:1234/secret', settings, apiKey: 'test', report: r => reports.push(r) });
     try {
       await vi.advanceTimersByTimeAsync(10);
@@ -160,6 +162,10 @@ describe('OpenAI tunnel process ownership', () => {
       expect(fixture.terminate).toHaveBeenCalledTimes(1);
       expect(fixture.children).toHaveLength(1);
       expect(handle.healthBase?.()).toBeNull();
+      const verdicts = getLog().filter(row => row.message.includes('control-plane authentication rejected'));
+      expect(verdicts).toHaveLength(before + 1);
+      expect(verdicts.at(-1)?.message).not.toContain(settings.tunnelId);
+      expect(verdicts.at(-1)?.message).not.toContain('/secret');
     } finally {
       await handle.stop();
     }

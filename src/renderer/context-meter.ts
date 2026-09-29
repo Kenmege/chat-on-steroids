@@ -42,7 +42,9 @@ export function paintContextMeter(session: SessionSummary | null, config: Config
   const description = () => [t('Session context · estimated'), pro
     ? t('{0} tokens used', [tokens()])
     : t('{0} / {1} tokens · {2}% of configured limit', [tokens(), new Intl.NumberFormat(currentLanguage()).format(limit), percent]),
-    pro ? t('Auto-compaction off for Pro') : config.compaction.auto
+    pro ? (config.compaction.auto
+      ? t('Failed Pro turns recover above the compaction threshold')
+      : t('Auto-compaction off for Pro')) : config.compaction.auto
       ? t('Auto-compaction at {0} tokens', [new Intl.NumberFormat(currentLanguage()).format(config.compaction.autoTokens)])
       : t('Auto-compaction off')].join('\n');
   // One fact per row: the estimate, the limit from Settings, the share, and when compaction starts.
@@ -50,7 +52,9 @@ export function paintContextMeter(session: SessionSummary | null, config: Config
   const limitRow = document.getElementById('contextLimit');
   if (limitRow) ui(limitRow, 'textContent', () => pro ? '—' : short(limit));
   ui(document.getElementById('contextPercent')!, 'textContent', () => pro ? '—' : `${percent}%`);
-  ui(document.getElementById('contextThreshold')!, 'textContent', () => pro ? t('Auto-compaction off for Pro') : config.compaction.auto ? short(config.compaction.autoTokens) : t('Off'));
+  ui(document.getElementById('contextThreshold')!, 'textContent', () => pro
+    ? t(config.compaction.auto ? 'Failed Pro turns recover above the compaction threshold' : 'Auto-compaction off for Pro')
+    : config.compaction.auto ? short(config.compaction.autoTokens) : t('Off'));
   const progress = panel.querySelector<HTMLElement>('.context-progress')!;
   progress.hidden = pro;
   progress.style.setProperty('--context-used', `${percent}%`);

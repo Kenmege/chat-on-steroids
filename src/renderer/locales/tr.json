@@ -14,6 +14,7 @@
   "One request, without automatic continuation.": "Otomatik devam olmadan tek bir istek.",
   "Continue until this objective is satisfied.": "Bu hedefe ulaşılana kadar devam et.",
   "Keep working within the brief until paused.": "Duraklatılana kadar istek kapsamında çalışmaya devam et.",
+  "Failed Pro turns recover above the compaction threshold": "Sıkıştırma eşiğini aşan başarısız Pro turları kurtarılır",
   "By model": "Modele göre",
   "By day": "Güne göre",
   "Code": "Kod",

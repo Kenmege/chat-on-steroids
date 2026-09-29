@@ -1,4 +1,7 @@
 {
+  "content_failed_pro_recovery": { "message": "Auto-recovery on after a failed Pro turn" },
+  "content_failed_pro_recovery_note": { "message": "healthy Pro stays manual; Thinking failed rolls over" },
+  "content_meter_recovery_status": { "message": "$1/$2 · failure rollover on" },
   "content_app_did_not_answer": {
     "message": "The app did not answer."
   },

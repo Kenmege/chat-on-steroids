@@ -15803,6 +15803,23 @@ describe('the context meter and automatic compaction', () => {
     expect(live.hook.meterView()!.status).toBe('283k/400k · autocompact off');
   });
 
+  it('shows the hard-limit meter and durable failure rollover for a healthy Pro exemption', async () => {
+    live = await harness(undefined, {
+      activity: () => withContext(283_000, settings({
+        auto: false,
+        configuredAuto: true,
+        failureRecovery: true,
+        threshold: 200_000
+      }))
+    });
+    live.hook.injectControl();
+    await live.hook.pullActivity();
+
+    const meter = live.hook.meterView()!;
+    expect(meter.filled).toBeCloseTo(283_000 / 400_000, 5);
+    expect(meter.status).toBe('283k/400k · failure rollover on');
+  });
+
   it('counts towards the threshold in the status line too, once one is set', async () => {
     live = await harness(undefined, {
       activity: () => withContext(100_000, settings({ auto: true, threshold: 200_000 }))
@@ -20227,6 +20244,28 @@ describe('the goal loop', () => {
       expect(set.mode!.value).toBe('goal');
       expect(set.mode!.note).toBe('replies until goal reached');
       expect(set.objective.actions.map((action) => action.label)).toEqual(['edit task']);
+    });
+
+    it('keeps the global switch visibly on when healthy Pro uses failure-only rollover', async () => {
+      await open();
+      const recoveryOnly = sheet(
+        { enabled: false, hasKey: true, model: MODEL, objective: '', blocked: '' },
+        {
+          context: {
+            auto: false,
+            configuredAuto: true,
+            failureRecovery: true,
+            threshold: 400_000
+          }
+        }
+      );
+
+      expect(recoveryOnly.rows[0]).toMatchObject({
+        key: 'autoCompact',
+        on: true,
+        note: 'healthy Pro stays manual; Thinking failed rolls over'
+      });
+      expect(recoveryOnly.tip.split('\n')[0]).toBe('Auto-recovery on after a failed Pro turn');
     });
 
     /**

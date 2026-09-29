@@ -1,4 +1,7 @@
 {
+  "content_failed_pro_recovery": { "message": "Reprise automatique après l’échec d’un tour Pro" },
+  "content_failed_pro_recovery_note": { "message": "Pro actif reste manuel ; un échec de raisonnement ouvre un nouveau chat" },
+  "content_meter_recovery_status": { "message": "$1/$2 · reprise après échec activée" },
   "content_app_did_not_answer": {
     "message": "L’application n’a pas répondu."
   },

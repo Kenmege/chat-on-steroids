@@ -111,6 +111,7 @@ import { noticeChatStopped } from './stuck-notice.js';
 import {
   autoCompactionReady,
   automaticCompactionAllowed,
+  failedTurnCompactionReady,
   conversationWasSuperseded,
   findSessionByConversation,
   getSession,
@@ -129,6 +130,7 @@ import {
 } from './session/store.js';
 import { inFlightMcpRequests, runningToolCalls, runningToolProgress, settlingToolCalls } from './mcp/call-context.js';
 import { nativeHandoffPrompt } from './session/handoff-prompt.js';
+import { buildEmergencyHandoffText } from './session/recovery-handoff.js';
 import { DEFAULT_HANDOFF_PROMPT } from '../shared/handoff.js';
 import { briefShortfall, resumeBootstrapText } from './session/handoff.js';
 import {
@@ -205,7 +207,8 @@ import {
   repairPrimeFromResumeShadow,
   resetContinuationsForTests,
   sendUnattempted,
-  type ContinuationSendState
+  type ContinuationSendState,
+  type ContinuationTrigger
 } from './session/continuation.js';
 import type { ContinuationView } from './session/continuation.js';
 import { noteResumeOpening } from './session/resume-gate.js';
@@ -2731,7 +2734,9 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       sleptWorker.sleptAt !== null && live.activeTurnStartedAt !== null && live.activeTurnStartedAt <= sleptWorker.sleptAt;
     const pendingStop = !superseded && summary?.conversationId === id && summary.activeTurnId === live.activeTurnId && stopRequestedFor(id, live.activeTurnId)
       ? commands.find(command => command.spec.type === 'stop' && command.spec.sessionId === live!.sessionId && command.spec.turnId === live!.activeTurnId) : undefined;
-    if (!automaticCompactionAllowed(summary)) await cancelAutomaticResumesNow(live.sessionId);
+    const pendingContinuation = continuationForSession(live.sessionId);
+    if (pendingContinuation?.automatic && !automaticContinuationAllowed(pendingContinuation, summary))
+      await cancelAutomaticResumesNow(live.sessionId);
     // Worker chats and user-blocked chats alike: neither may auto-compact — see goalBlockReason.
     const workerBlocked = goalFencedChat(id);
     const requestedSince = Number.isFinite(since) ? Math.max(0, since) : 0;
@@ -2940,7 +2945,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
         // different conversation, while the continuation transaction only knows how to move a
         // run's prime binding, so a worker that compacted would be stranded in B while the
         // broker still authorised A.
-        context: contextView(!workerBlocked && !superseded && automaticCompactionAllowed(summary)),
+        context: contextView(!workerBlocked && !superseded, summary),
         // This chat was opened by the app, so its first user message is not the user's —
         // it is the handoff brief or the worker bootstrap this app typed. The page uses
         // it to fold that message away. Read off the session record rather than remembered
@@ -3040,7 +3045,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     const checkpoint = continuationByToken(checkpointToken);
     if (checkpoint?.automatic &&
         (body['sourceAttempt'] === true || body['sourceDispatch'] === true || body['destinationAttempt'] === true || body['destinationDispatch'] === true) &&
-        !automaticCompactionAllowed(await getSession(checkpoint.sessionId))) {
+        !automaticContinuationAllowed(checkpoint, await getSession(checkpoint.sessionId))) {
       await cancelAutomaticResumesNow(checkpoint.sessionId);
       return json(res, 409, { error: 'automatic_compaction_disabled' }, origin);
     }
@@ -3268,7 +3273,11 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       return json(res, 200, { cancelled, sessionId, job: resumeJobFor(sessionId) }, origin);
     }
 
-    const autoAllowed = automaticCompactionAllowed(await getSession(sessionId));
+    const sessionSummary = await getSession(sessionId);
+    const pendingAutomatic = continuationForSession(sessionId);
+    const autoAllowed = pendingAutomatic?.automatic
+      ? automaticContinuationAllowed(pendingAutomatic, sessionSummary)
+      : automaticCompactionAllowed(sessionSummary);
     if (!autoAllowed) {
       const pending = continuationForSession(sessionId);
       await cancelAutomaticResumesNow(sessionId);
@@ -5388,6 +5397,8 @@ export interface ResumeJobView {
   startedAt: number;
   /** True only for a threshold-triggered ticket; Auto Off may cancel only these. */
   automatic: boolean;
+  /** Why this ticket exists; exact failure recovery may cross the healthy-Pro exemption. */
+  trigger: ContinuationTrigger;
   /** True while the button must stay disabled. */
   busy: boolean;
   handoffId: string | null;
@@ -5445,6 +5456,7 @@ export function resumeJobFor(sessionId: string): ResumeJobView | null {
     stage,
     startedAt: entry.openedAt,
     automatic: entry.automatic,
+    trigger: entry.trigger,
     busy: RUNNING_STAGES.has(stage),
     handoffId: entry.handoffId,
     sourceSend: entry.sourceSend,
@@ -5461,15 +5473,20 @@ export function resumeJobFor(sessionId: string): ResumeJobView | null {
  * one the user set for automatic compaction, and it only means anything while `auto` is
  * on. The page decides which to show, but it is not allowed to invent any of them.
  */
-function contextView(autoAllowed = true): {
+function contextView(autoAllowed = true, summary?: SessionSummary | null): {
   auto: boolean;
+  configuredAuto: boolean;
+  failureRecovery: boolean;
   threshold: number;
   warn: number;
   limit: number;
 } {
   const config = getConfig();
+  const configuredAuto = autoAllowed && config.compaction.auto;
   return {
-    auto: autoAllowed && automaticCompactionAllowed(),
+    auto: autoAllowed && automaticCompactionAllowed(summary),
+    configuredAuto,
+    failureRecovery: configuredAuto,
     threshold: config.compaction.autoTokens,
     warn: config.sessions.advisoryTokens,
     limit: config.sessions.limitTokens
@@ -5551,7 +5568,16 @@ export async function cancelResumeNow(sessionId: string): Promise<boolean> {
   return true;
 }
 
-/** Auto Off owns only threshold-created tickets; manual Compact & Resume remains explicit. */
+/** Whether a durable automatic ticket still has policy authority. */
+function automaticContinuationAllowed(entry: ContinuationView, summary?: SessionSummary | null): boolean {
+  if (!entry.automatic) return true;
+  if (!getConfig().compaction.auto) return false;
+  // The provider has already terminated this turn. Healthy Pro's no-interruption exemption no
+  // longer applies, and cancelling the ticket here would recreate the exact failure on restart.
+  return entry.trigger === 'thinking-failed' || automaticCompactionAllowed(summary);
+}
+
+/** Auto Off owns automatic tickets; manual Compact & Resume remains explicit. */
 async function cancelAutomaticResumesNow(sessionId?: string): Promise<number> {
   let cancelled = 0;
   for (const entry of pendingContinuations()) {
@@ -6295,6 +6321,7 @@ async function chatStillWorking(conversationId: string, turnId: string, sessionI
  */
 /** An exact failed current turn can earn compaction; a historical banner cannot. */
 async function failedCompactionTurnCurrent(conversationId: string, sessionId: string, turnId: string): Promise<boolean> {
+  if (runningToolCalls(conversationId) > 0 || goalFencedChat(conversationId) || stopRequestedFor(conversationId)) return false;
   const before = await getSession(sessionId);
   if (!before || before.conversationId !== conversationId || before.activeTurnId) return false;
   const [last] = await readRecentEvents(sessionId, 1, {
@@ -6303,10 +6330,55 @@ async function failedCompactionTurnCurrent(conversationId: string, sessionId: st
   if (last?.kind !== 'turn_end' || last.turnId !== turnId || last.outcome !== 'failed') return false;
   if (await readCompletedFinal(sessionId, conversationId, turnId)) return false;
   const after = await getSession(sessionId);
-  return !!after && after.conversationId === conversationId && !after.activeTurnId && after.events === before.events;
+  return !!after && after.conversationId === conversationId && !after.activeTurnId && after.events === before.events &&
+    runningToolCalls(conversationId) === 0 && !goalFencedChat(conversationId) && !stopRequestedFor(conversationId);
 }
 
-async function considerAutomaticCompaction(conversationId: string, sessionId: string, failedTurn?: string): Promise<void> {
+/**
+ * Finishes a failure-recovery continuation when its own source-authored handoff generation dies.
+ *
+ * The marker and bound source message prove this was the exact compaction prompt, not the user's
+ * original failed turn or a historical banner. The replacement brief comes only from the durable
+ * redacted ledger and contains summaries rather than raw tool payloads.
+ */
+async function recoverFailedCompactionHandoff(
+  conversationId: string,
+  sessionId: string,
+  failedTurnId: string
+): Promise<boolean> {
+  const entry = continuationForSession(sessionId);
+  if (!entry || !getConfig().compaction.auto || entry.from !== conversationId || entry.trigger !== 'thinking-failed' ||
+      entry.state !== 'awaiting-summary' || entry.sourceSend.state !== 'sent' || !entry.sourceSend.messageId) return false;
+  const question = await readLatestUserMessage(sessionId, failedTurnId);
+  const marker = continuationMarkerOf(question?.message.text);
+  if (!question?.messageId || question.messageId !== entry.sourceSend.messageId ||
+      marker?.kind !== 'HANDOFF' || marker.token !== entry.token) return false;
+  if (!await failedCompactionTurnCurrent(conversationId, sessionId, failedTurnId)) return false;
+
+  const brief = await buildEmergencyHandoffText(sessionId, { conversationId, failedTurnId });
+  // Recheck every identity after the potentially large ledger read. A newer question, repaired
+  // native answer, cancel, rebind or replacement ticket must make these bytes inert.
+  const current = continuationForSession(sessionId);
+  if (!current || !getConfig().compaction.auto || current.token !== entry.token || current.state !== 'awaiting-summary' ||
+      current.sourceSend.messageId !== question.messageId ||
+      !await failedCompactionTurnCurrent(conversationId, sessionId, failedTurnId)) return false;
+  const handoff = await attachSummary(entry.token, brief);
+  if (!handoff) return false;
+  queueResumeCommand(sessionId, entry.token);
+  await deliver();
+  logWarn(
+    `bridge: ${conversationId} also Thinking failed while writing its handoff — reconstructed ${handoff.id} from the durable session ledger`
+  );
+  return true;
+}
+
+async function considerAutomaticCompaction(
+  conversationId: string,
+  sessionId: string,
+  failedTurn?: string,
+  cause: 'threshold' | 'transport-error' | 'thinking-failed' = failedTurn ? 'transport-error' : 'threshold'
+): Promise<void> {
+  const failedRecovery = cause === 'thinking-failed';
   if (!getConfig().compaction.auto || compactionFilings.has(conversationId)) return;
   if (goalFencedChat(conversationId) || continuationForSession(sessionId) || stopRequestedFor(conversationId)) return;
   // Exact tool attribution already owns this grant and consumes it on final/Stop.
@@ -6322,20 +6394,24 @@ async function considerAutomaticCompaction(conversationId: string, sessionId: st
   compactionFilings.add(conversationId);
   try {
     const summary = await getSession(sessionId).catch(() => null);
-    if (!summary || summary.conversationId !== conversationId || summary.endedAt !== null || summary.browserRecoveryDismissedAt !== undefined || !autoCompactionReady(summary, hasCurrentWork())) return;
+    if (!summary || summary.conversationId !== conversationId || summary.endedAt !== null || summary.browserRecoveryDismissedAt !== undefined ||
+        !(failedRecovery ? failedTurnCompactionReady(summary) : autoCompactionReady(summary, hasCurrentWork()))) return;
     if (await conversationWasSuperseded(conversationId)) return;
     if (failedTurn && !await failedCompactionTurnCurrent(conversationId, sessionId, failedTurn)) return;
     // Re-read after the awaits: the turn may have ended, or a page may have filed by hand.
     const current = await getSession(sessionId);
-    if (!current || current.conversationId !== conversationId || current.endedAt !== null || current.browserRecoveryDismissedAt !== undefined || !autoCompactionReady(current, hasCurrentWork())) return;
+    if (!current || current.conversationId !== conversationId || current.endedAt !== null || current.browserRecoveryDismissedAt !== undefined ||
+        !(failedRecovery ? failedTurnCompactionReady(current) : autoCompactionReady(current, hasCurrentWork()))) return;
     if (failedTurn && !await failedCompactionTurnCurrent(conversationId, sessionId, failedTurn)) return;
     if ((!failedTurn && !hasCurrentWork()) || continuationForSession(sessionId) || goalFencedChat(conversationId) ||
-        stopRequestedFor(conversationId) || !getConfig().compaction.auto || !automaticCompactionAllowed(current)) return;
-    const opened = await openContinuationNow(sessionId, conversationId, true);
+        stopRequestedFor(conversationId) || !getConfig().compaction.auto ||
+        (!failedRecovery && !automaticCompactionAllowed(current))) return;
+    const opened = await openContinuationNow(sessionId, conversationId, true, null,
+      failedRecovery ? 'thinking-failed' : 'threshold', failedTurn ?? null);
     rememberToken(sessionId, opened.token);
     changed();
     logInfo(
-      `bridge: ${conversationId} ${failedTurn ? 'lost its current turn' : 'is working'} at ${current.contextTokens} context tokens — filed auto-compaction ticket ${opened.token.slice(0, 8)}`
+      `bridge: ${conversationId} ${failedRecovery ? 'ended with Thinking failed' : failedTurn ? 'lost its current turn' : 'is working'} at ${current.contextTokens} context tokens — filed auto-compaction ticket ${opened.token.slice(0, 8)}`
     );
   } catch (err) {
     logWarn(`bridge: could not file the auto-compaction ticket for ${conversationId} — ${err instanceof Error ? err.message : String(err)}`);
@@ -7202,6 +7278,9 @@ async function noteRecoveryObservations(
     }
     await inspectSilentChats(Date.now());
     armSilenceSweep();
+    if (!await recoverFailedCompactionHandoff(conversationId, sessionId, ended.turnId)) {
+      await considerAutomaticCompaction(conversationId, sessionId, ended.turnId, 'thinking-failed');
+    }
   }
   // Another turn is the chat carrying on, and the only thing that is. Read before the failure
   // below rather than after it: one batch can carry a turn's start and its failed end, and
@@ -7950,7 +8029,7 @@ async function inspectOwedCompactions(now: number): Promise<boolean> {
   for (const entry of owed.values()) {
     const session = await getSession(entry.sessionId);
     if (session?.conversationId !== entry.from || session.browserRecoveryDismissedAt !== undefined) continue;
-    if (entry.automatic && !automaticCompactionAllowed(await getSession(entry.sessionId))) {
+    if (entry.automatic && !automaticContinuationAllowed(entry, session)) {
       await cancelAutomaticResumesNow(entry.sessionId);
       continue;
     }
