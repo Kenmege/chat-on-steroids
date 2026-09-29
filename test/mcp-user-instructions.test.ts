@@ -80,16 +80,26 @@ describe('the user’s own connector instructions', () => {
     const text = serverInstructions(ctx, 'core', 'darwin');
     expect(text).toContain('Enabled plugin tools: fabric_route, read_file.');
     expect(text).toContain('The user does not need to name a connector or tool');
+    expect(text).toContain('read alone is partial');
     expect(text).toContain('text(await tools.exec_command({cmd: command}))');
+    expect(text).toContain('gaps are not read-only');
     exposed.mockReturnValue([]);
     expect(serverInstructions(ctx, 'core', 'darwin')).not.toContain('Enabled plugin tools:');
     expect(serverInstructions({ ...ctx, readOnly: true }, 'core', 'darwin'))
       .not.toContain('text(await tools.exec_command({cmd: command}))');
   });
 
-  it('distinguishes execution through code mode from a proposal to execute again', () => {
+  it('distinguishes execution through code mode from a proposal to execute again', async () => {
+    const { codeModeDeclaration, EXEC_NO_REPEAT } = await import('../src/main/mcp/code-mode-tool.js');
+    // The no-repeat rule lives on the exec contract itself, shown wherever exec is
+    // discovered, on every description variant — not in server instructions.
+    for (const options of [{}, { windowsDesktop: true }] as const) {
+      const declaration = codeModeDeclaration(options, ['read', 'exec_command']);
+      expect(declaration.description).toContain(EXEC_NO_REPEAT);
+      expect(declaration.description).toContain('A successful tools call inside exec has already executed');
+    }
     for (const surface of ['core', 'desktop'] as const) {
-      expect(serverInstructions(ctx, surface, 'darwin')).toContain('A successful tools call inside exec has already executed');
+      expect(serverInstructions(ctx, surface, 'darwin')).not.toContain('A successful tools call inside exec has already executed');
     }
   });
 
