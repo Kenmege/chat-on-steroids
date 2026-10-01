@@ -28,6 +28,19 @@ private func fail(_ code: String, _ message: String) -> ProbeFailure { ProbeFail
 
 // PRODUCTION_FUNCTIONS
 
+private func checkProcess(_ name: String, _ pid: pid_t, expected: Bool) throws {
+    guard isDesktopWindowProcess(pid) == expected else { throw ProbeFailure(code: "FAILED: \(name)") }
+    print("PASS: \(name)")
+}
+#if COS_DESKTOP_ADDON
+try checkProcess("addon owner windows stay discoverable", getpid(), expected: true)
+#else
+try checkProcess("standalone helper windows stay excluded", getpid(), expected: false)
+#endif
+try checkProcess("another positive process stays discoverable", getpid() + 1, expected: true)
+try checkProcess("zero process identity stays rejected", 0, expected: false)
+try checkProcess("negative process identity stays rejected", -1, expected: false)
+
 private let bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
 private let target = WindowRow(id: 17, pid: 101, bounds: bounds)
 private func check(_ name: String, _ candidates: [AXUIElement], expected: String?) throws {

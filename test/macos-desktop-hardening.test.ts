@@ -8,6 +8,14 @@ const computer = readFileSync(path.join(process.cwd(), 'src/main/computer/index.
 const desktopTools = readFileSync(path.join(process.cwd(), 'src/main/mcp/tools-desktop-macos.ts'), 'utf8');
 
 describe('macOS desktop safety hardening', () => {
+  it('includes the Electron owner in addon discovery while excluding only standalone helper windows', () => {
+    expect(swift).toContain('private func isDesktopWindowProcess');
+    expect(swift).toMatch(/private func isDesktopWindowProcess[\s\S]*#if COS_DESKTOP_ADDON\s*return pid > 0\s*#else\s*return pid > 0 && pid != getpid\(\)\s*#endif/);
+    const enumeration = swift.slice(swift.indexOf('private func allWindowRows'), swift.indexOf('private func windowRow'));
+    expect(enumeration).toContain('isDesktopWindowProcess(pid)');
+    expect(enumeration).not.toContain('pid != ownPid');
+  });
+
   it('requires exact Workspace, WindowServer and AX agreement for physical input', () => {
     expect(swift).toContain('private func windowServerFrontWindowID');
     expect(swift).toContain('private func focusedAXWindowID');

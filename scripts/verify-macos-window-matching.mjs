@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const source = readFileSync(path.join(root, 'native/macos-desktop-helper/main.swift'), 'utf8');
-const names = ['approximatelyEqual', 'convincinglyMatchesWindow', 'windowGeometryDistance', 'unambiguousWindowID', 'matchingAXWindow'];
+const names = ['isDesktopWindowProcess', 'approximatelyEqual', 'convincinglyMatchesWindow', 'windowGeometryDistance', 'unambiguousWindowID', 'matchingAXWindow'];
 const functions = names.map(name => {
   const start = source.indexOf(`private func ${name}(`);
   const end = source.indexOf('\n}', start);
@@ -22,7 +22,8 @@ if (process.argv.includes('--print')) {
   try {
     const file = path.join(directory, 'probe.swift');
     writeFileSync(file, program);
-    const result = spawnSync('swift', [file], { cwd: directory, encoding: 'utf8', timeout: 20_000, windowsHide: true });
+    const flags = process.argv.includes('--addon') ? ['-D', 'COS_DESKTOP_ADDON'] : [];
+    const result = spawnSync('swift', [...flags, file], { cwd: directory, encoding: 'utf8', timeout: 20_000, windowsHide: true });
     if (result.error) throw result.error;
     process.stdout.write(result.stdout ?? '');
     process.stderr.write(result.stderr ?? '');

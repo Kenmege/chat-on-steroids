@@ -7,6 +7,15 @@ it.skipIf(!swiftAvailable)('executes native window matching against contradictor
   const output = execFileSync(process.execPath, ['scripts/verify-macos-window-matching.mjs'], {
     encoding: 'utf8', timeout: 25_000, windowsHide: true
   });
-  expect(output.trim().split(/\r?\n/)).toHaveLength(6);
+  expect(output.trim().split(/\r?\n/)).toHaveLength(10);
   expect(output).toContain('PASS: contradictory ID cannot borrow matching geometry');
+  expect(output).toContain('PASS: standalone helper windows stay excluded');
+  const addon = execFileSync(process.execPath, ['scripts/verify-macos-window-matching.mjs', '--addon'], {
+    encoding: 'utf8', timeout: 25_000, windowsHide: true
+  });
+  expect(addon.trim().split(/\r?\n/)).toHaveLength(10);
+  expect(addon).toContain('PASS: addon owner windows stay discoverable');
+  expect(addon).toContain('PASS: zero process identity stays rejected');
+  expect(addon).toContain('PASS: negative process identity stays rejected');
+  expect(addon).toContain('PASS: contradictory ID cannot borrow matching geometry');
 }, 30_000);

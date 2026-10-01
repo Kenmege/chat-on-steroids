@@ -211,10 +211,19 @@ private func offscreenAXWindowStates(in rows: [WindowRow]) -> [CGWindowID: Bool]
     return states
 }
 
+private func isDesktopWindowProcess(_ pid: pid_t) -> Bool {
+    // The addon runs inside Electron. Its owner has real windows that must stay
+    // discoverable; only a separate command-line helper excludes its own PID.
+    #if COS_DESKTOP_ADDON
+    return pid > 0
+    #else
+    return pid > 0 && pid != getpid()
+    #endif
+}
+
 private func allWindowRows(includeMinimized: Bool = true) -> [WindowRow] {
     guard let raw = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID)
         as? [JSONObject] else { return [] }
-    let ownPid = getpid()
     // A visible-looking off-Space window can have no kCGWindowIsOnscreen key.
     // Only the authoritative on-screen list may restore an omitted flag.
     let onScreenIDs = Set((CGWindowListCopyWindowInfo(
@@ -224,7 +233,7 @@ private func allWindowRows(includeMinimized: Bool = true) -> [WindowRow] {
         guard
             let id = number(item[kCGWindowNumber as String])?.uint32Value,
             let pid = number(item[kCGWindowOwnerPID as String])?.int32Value,
-            pid != ownPid,
+            isDesktopWindowProcess(pid),
             let boundsDictionary = item[kCGWindowBounds as String] as? NSDictionary,
             let bounds = CGRect(dictionaryRepresentation: boundsDictionary),
             bounds.width > 1,
