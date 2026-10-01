@@ -226,6 +226,7 @@ describe('projectLive', () => {
     stage: 'handoff-pending',
     startedAt: 1_000,
     automatic: false,
+    trigger: 'manual',
     busy: true,
     handoffId: 'SENTINEL-HANDOFF',
     sourceSend: { state: 'not-attempted', messageId: 'SENTINEL-SOURCE-MESSAGE' },
