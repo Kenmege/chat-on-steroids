@@ -287,9 +287,8 @@ private func windowRow(_ id: CGWindowID) -> WindowRow? {
 }
 
 private func frontmostPID() -> pid_t? {
-    // For trusted assistive control, query the system-wide AX focus directly. NSWorkspace's
-    // frontmostApplication is notification-backed and can be stale on a native worker or
-    // command-line helper whose run loop does not own the workspace notification source.
+    // System-wide AX can fail even while app-specific AX remains healthy. Never
+    // promote its partial value or Workspace's notification cache to input proof.
     if AXIsProcessTrusted() {
         let system = AXUIElementCreateSystemWide()
         if let focused = axElementAttribute(system, kAXFocusedApplicationAttribute as CFString),
@@ -297,7 +296,13 @@ private func frontmostPID() -> pid_t? {
            pid > 0 {
             return pid
         }
+        let rows = allWindowRows(includeMinimized: false)
+        guard let id = windowServerFrontWindowID(rows: rows),
+              let row = rows.first(where: { $0.id == id }),
+              axBool(axApplication(row.pid), kAXFrontmostAttribute as CFString) else { return nil }
+        return row.pid
     }
+    // Screen-only observation without AX has no authority to inject input.
     return NSWorkspace.shared.frontmostApplication?.processIdentifier
 }
 

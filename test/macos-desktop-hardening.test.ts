@@ -40,8 +40,9 @@ describe('macOS desktop safety hardening', () => {
     expect(keyboardProof).toContain('focusedAXElementWindowID(for: row.pid, rows: rows) == row.id');
   });
 
-  it('falls back to Workspace only when system-wide AX reports an invalid focused-app pid', () => {
+  it('requires live AX and WindowServer proof when trusted system-wide AX is unavailable', () => {
     expect(swift).toMatch(/kAXFocusedApplicationAttribute[\s\S]*let pid = axPID\(focused\),[\s\S]*pid > 0[\s\S]*return pid/);
+    expect(swift).toMatch(/private func frontmostPID[\s\S]*let id = windowServerFrontWindowID\(rows: rows\)[\s\S]*axBool\(axApplication\(row\.pid\), kAXFrontmostAttribute as CFString\) else \{ return nil \}/);
     expect(swift).toMatch(/private func frontmostPID[\s\S]*return NSWorkspace\.shared\.frontmostApplication\?\.processIdentifier/);
   });
 
