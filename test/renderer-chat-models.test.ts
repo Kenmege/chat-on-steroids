@@ -126,20 +126,25 @@ it('opening an empty or pending picker requests models immediately without a sep
   expect(requestChatModels).toHaveBeenCalledTimes(2);
 });
 
-it('offers every observed model, including GPT-5.5 and future models, separately from effort', async () => {
+it('offers supported observed models, excludes the retired composer family and defaults to the newest observed family', async () => {
   dom = new JSDOM(await readFile('src/renderer/index.html', 'utf8'));
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   const models = [
     { id: 'old', label: 'GPT-5.5', efforts: ['medium', 'high', 'pro'] },
+    { id: 'current', label: 'GPT-6 Luna', efforts: ['medium', 'high', 'pro'] },
     { id: 'sol', label: 'GPT-5.6 Sol', efforts: ['medium', 'high'] },
     { id: 'future', label: 'GPT-7', efforts: ['high'] }
   ];
   Object.assign(dom.window, { api: { getChatModels: async () => ({ ok: true, data: { state: 'ready', requestedAt: 1, observedAt: 2, models } }) } });
   const { initChatModels, applyChatModels, confirmedComposerModel } = await import('../src/renderer/chat-models.js');
   initChatModels(); applyChatModels({ multiAgent: {}, goal: {} } as Config); await Promise.resolve();
+  expect(confirmedComposerModel()).toEqual({ model: 'future', reasoningEffort: 'high' });
+  expect(dom.window.document.querySelector('#composerPowerChoices input')).toBeNull();
+  dom.window.document.querySelector<HTMLButtonElement>('[data-model="current"]')!.click();
   const slider = dom.window.document.querySelector<HTMLInputElement>('#composerPowerChoices input')!;
   expect(slider.max).toBe('2');
-  expect([...dom.window.document.querySelectorAll<HTMLOptionElement>('#composerModel option')].map(option => option.value)).toEqual(['old', 'sol', 'future']);
+  expect([...dom.window.document.querySelectorAll<HTMLOptionElement>('#composerModel option')].map(option => option.value)).toEqual(['current', 'sol', 'future']);
+  expect(dom.window.document.querySelector('[data-model="old"]')).toBeNull();
   expect([...dom.window.document.querySelectorAll<HTMLOptionElement>('#workerModel option')].some(option => option.value === 'old')).toBe(true);
   dom.window.document.querySelector<HTMLButtonElement>('[data-model="future"]')!.click();
   expect(confirmedComposerModel()).toEqual({ model: 'future', reasoningEffort: 'high' });
@@ -330,14 +335,14 @@ it('keeps model provider order and restricts the slider to the selected model’
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document);
   const models = [
     { id: 'astra', label: 'GPT-6 Astra', efforts: ['high'] },
-    { id: 'old', label: 'GPT-5.5', efforts: ['low', 'high', 'pro'] },
+    { id: 'current', label: 'GPT-6 Luna', efforts: ['low', 'high', 'pro'] },
     { id: 'sol', label: 'GPT-5.6 Sol', efforts: ['none', 'high', 'minimal', 'low', 'medium'] }
   ];
   Object.assign(dom.window, { api: { getChatModels: async () => ({ ok: true, data: { state: 'ready', requestedAt: 1, observedAt: Date.now(), models } }) } });
   const { initChatModels, applyChatModels, confirmedComposerModel } = await import('../src/renderer/chat-models.js');
   initChatModels(); applyChatModels({ multiAgent: {}, goal: {} } as Config); await Promise.resolve();
   const doc = dom.window.document;
-  expect([...doc.querySelectorAll<HTMLElement>('[data-model]')].map(row => row.dataset.model)).toEqual(['astra', 'old', 'sol']);
+  expect([...doc.querySelectorAll<HTMLElement>('[data-model]')].map(row => row.dataset.model)).toEqual(['astra', 'current', 'sol']);
   // A single effort (Instant) is not a choice: no slider, the effort is named instead.
   expect(doc.querySelector('#composerPowerChoices input')).toBeNull();
   expect(doc.getElementById('composerPowerModel')!.textContent).toBe('High');
@@ -369,6 +374,9 @@ it('offers GPT-5.6 Pro and GPT-6 Pro with distinct observed model identities', a
   Object.assign(dom.window, { api: { getChatModels: async () => ({ ok: true, data: { state: 'ready', models } }) } });
   const { initChatModels, applyChatModels, confirmedComposerModel } = await import('../src/renderer/chat-models.js');
   initChatModels(); applyChatModels({ multiAgent: {}, goal: {} } as Config); await Promise.resolve();
+  expect(confirmedComposerModel()).toEqual({ model: '6', reasoningEffort: 'pro' });
+  expect(dom.window.document.querySelector('#composerPowerChoices input')).toBeNull();
+  dom.window.document.querySelector<HTMLButtonElement>('[data-model="5.6"]')!.click();
   const slider = dom.window.document.querySelector<HTMLInputElement>('#composerPowerChoices input')!;
   expect(slider.max).toBe('4');
   for (const model of ['5.6', '6']) {
