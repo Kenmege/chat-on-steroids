@@ -586,11 +586,21 @@ private func assertInputTarget(_ id: CGWindowID) throws -> WindowRow {
     return row
 }
 
+// In the addon, AX calls targeting our own process enter AppKit directly. Mutating
+// NSWindow or a control from the Node worker can trap. Dispatch only the mutation,
+// never capture semaphores, traversal or focus polling, which need a responsive UI.
+private func onDesktopMainThread<T>(_ operation: () throws -> T) rethrows -> T {
+    #if COS_DESKTOP_ADDON
+    if !Thread.isMainThread { return try DispatchQueue.main.sync(execute: operation) }
+    #endif
+    return try operation()
+}
+
 private func setAXValueIfPossible(_ element: AXUIElement, _ attribute: CFString, _ value: CFTypeRef) {
     var settable = DarwinBoolean(false)
     guard AXUIElementIsAttributeSettable(element, attribute, &settable) == .success,
           settable.boolValue else { return }
-    _ = AXUIElementSetAttributeValue(element, attribute, value)
+    _ = onDesktopMainThread { AXUIElementSetAttributeValue(element, attribute, value) }
 }
 
 private func setAXBooleanIfPossible(_ element: AXUIElement, _ attribute: CFString, _ value: Bool) {
@@ -659,19 +669,17 @@ private func focusWindow(_ id: CGWindowID) throws -> Bool {
     if focusTargetMatches(row) { return true }
     guard let app = NSRunningApplication(processIdentifier: row.pid) else { return false }
     let window = try matchingAXWindow(row)
-    var minimizedSettable = DarwinBoolean(false)
-    if AXUIElementIsAttributeSettable(window, kAXMinimizedAttribute as CFString, &minimizedSettable) == .success,
-       minimizedSettable.boolValue {
-        _ = AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+    onDesktopMainThread {
+        setAXBooleanIfPossible(window, kAXMinimizedAttribute as CFString, false)
+        _ = app.activate(options: [.activateIgnoringOtherApps])
+        let appElement = axApplication(row.pid)
+        setAXBooleanIfPossible(appElement, kAXFrontmostAttribute as CFString, true)
+        setAXValueIfPossible(appElement, kAXMainWindowAttribute as CFString, window)
+        setAXValueIfPossible(appElement, kAXFocusedWindowAttribute as CFString, window)
+        setAXBooleanIfPossible(window, kAXMainAttribute as CFString, true)
+        setAXBooleanIfPossible(window, kAXFocusedAttribute as CFString, true)
+        _ = AXUIElementPerformAction(window, kAXRaiseAction as CFString)
     }
-    _ = app.activate(options: [.activateIgnoringOtherApps])
-    let appElement = axApplication(row.pid)
-    setAXBooleanIfPossible(appElement, kAXFrontmostAttribute as CFString, true)
-    setAXValueIfPossible(appElement, kAXMainWindowAttribute as CFString, window)
-    setAXValueIfPossible(appElement, kAXFocusedWindowAttribute as CFString, window)
-    setAXBooleanIfPossible(window, kAXMainAttribute as CFString, true)
-    setAXBooleanIfPossible(window, kAXFocusedAttribute as CFString, true)
-    _ = AXUIElementPerformAction(window, kAXRaiseAction as CFString)
     let deadline = ProcessInfo.processInfo.systemUptime + 2.0
     var consecutiveMatches = 0
     while ProcessInfo.processInfo.systemUptime < deadline {
@@ -1165,11 +1173,11 @@ private func actUI(_ request: JSONObject) throws -> JSONObject {
         var settable = DarwinBoolean(false)
         guard AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success,
               settable.boolValue,
-              AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, string(request["value"]) as CFTypeRef) == .success else {
+              onDesktopMainThread({ AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, string(request["value"]) as CFTypeRef) }) == .success else {
             throw fail("UI_ACTION_FAILED", "the control does not expose a settable value")
         }
     } else if action == "click" {
-        if AXUIElementPerformAction(element, kAXPressAction as CFString) != .success {
+        if onDesktopMainThread({ AXUIElementPerformAction(element, kAXPressAction as CFString) }) != .success {
             guard try focusWindow(snapshot.window) else {
                 throw fail("FOCUS_FAILED", "snapshot window \(snapshot.window) could not be activated")
             }
