@@ -42,7 +42,7 @@ describe('macOS desktop safety hardening', () => {
 
   it('requires live AX and WindowServer proof when trusted system-wide AX is unavailable', () => {
     expect(swift).toMatch(/kAXFocusedApplicationAttribute[\s\S]*let pid = axPID\(focused\),[\s\S]*pid > 0[\s\S]*return pid/);
-    expect(swift).toMatch(/private func frontmostPID[\s\S]*let id = windowServerFrontWindowID\(rows: rows\)[\s\S]*axBool\(axApplication\(row\.pid\), kAXFrontmostAttribute as CFString\) else \{ return nil \}/);
+    expect(swift).toMatch(/private func frontmostPID[\s\S]*let id = windowServerFrontWindowID\(rows: rows\)[\s\S]*axBool\(axApplication\(row\.pid\), kAXFrontmostAttribute as CFString, default: false\) else \{ return nil \}/);
     expect(swift).toMatch(/private func frontmostPID[\s\S]*return NSWorkspace\.shared\.frontmostApplication\?\.processIdentifier/);
   });
 

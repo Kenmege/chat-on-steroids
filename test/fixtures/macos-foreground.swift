@@ -20,7 +20,8 @@ func AXUIElementCreateSystemWide() -> AXUIElement { 0 }
 func axElementAttribute(_ element: AXUIElement, _ key: CFString) -> AXUIElement? { systemPID }
 func axPID(_ element: AXUIElement) -> pid_t? { element }
 func axApplication(_ pid: pid_t) -> AXUIElement { pid }
-func axBool(_ element: AXUIElement, _ key: CFString, default fallback: Bool = false) -> Bool { frontmost[element] ?? fallback }
+func axAttribute(_ element: AXUIElement, _ key: CFString) -> AnyObject? { frontmost[element].map { NSNumber(value: $0) } }
+// PRODUCTION_AX_BOOL
 func allWindowRows(includeMinimized: Bool) -> [WindowRow] { rows }
 func windowServerFrontWindowID(rows: [WindowRow]) -> CGWindowID? { frontID }
 // PRODUCTION_FUNCTION

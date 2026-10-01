@@ -10,8 +10,17 @@ it('requires live AX corroboration before accepting a WindowServer foreground ca
   expect(proof).toContain('let rows = allWindowRows(includeMinimized: false)');
   expect(proof).toContain('let id = windowServerFrontWindowID(rows: rows)');
   expect(proof).toContain('let row = rows.first(where: { $0.id == id })');
-  expect(proof).toContain('axBool(axApplication(row.pid), kAXFrontmostAttribute as CFString)');
+  expect(proof).toContain('axBool(axApplication(row.pid), kAXFrontmostAttribute as CFString, default: false)');
   expect(proof).toMatch(/axBool\(axApplication\(row\.pid\)[\s\S]*else \{ return nil \}[\s\S]*return row\.pid/);
+});
+
+it('executes the production AX boolean helper without a fixture-only default argument', () => {
+  const runner = readFileSync('scripts/verify-macos-foreground.mjs', 'utf8');
+  const fixture = readFileSync('test/fixtures/macos-foreground.swift', 'utf8');
+  expect(runner).toContain("source.indexOf('private func axBool(')");
+  expect(runner).toContain(".replace('// PRODUCTION_AX_BOOL', () => source.slice(boolStart, boolEnd + 2))");
+  expect(fixture).toContain('// PRODUCTION_AX_BOOL');
+  expect(fixture).not.toMatch(/func axBool\(/);
 });
 
 it('never consults notification-cached Workspace on the trusted AX failure path', () => {

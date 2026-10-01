@@ -299,7 +299,7 @@ private func frontmostPID() -> pid_t? {
         let rows = allWindowRows(includeMinimized: false)
         guard let id = windowServerFrontWindowID(rows: rows),
               let row = rows.first(where: { $0.id == id }),
-              axBool(axApplication(row.pid), kAXFrontmostAttribute as CFString) else { return nil }
+              axBool(axApplication(row.pid), kAXFrontmostAttribute as CFString, default: false) else { return nil }
         return row.pid
     }
     // Screen-only observation without AX has no authority to inject input.

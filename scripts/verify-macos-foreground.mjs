@@ -8,7 +8,12 @@ const start = source.indexOf('private func frontmostPID(');
 const end = source.indexOf('\n}', start);
 if (start < 0 || end < 0) throw new Error('Missing production foreground function');
 const fixture = readFileSync('test/fixtures/macos-foreground.swift', 'utf8');
-const program = fixture.replace('// PRODUCTION_FUNCTION', () => source.slice(start, end + 2));
+const boolStart = source.indexOf('private func axBool(');
+const boolEnd = source.indexOf('\n}', boolStart);
+if (boolStart < 0 || boolEnd < 0) throw new Error('Missing production AX boolean helper');
+const program = fixture
+  .replace('// PRODUCTION_AX_BOOL', () => source.slice(boolStart, boolEnd + 2))
+  .replace('// PRODUCTION_FUNCTION', () => source.slice(start, end + 2));
 const directory = mkdtempSync(path.join(tmpdir(), 'cos-foreground-'));
 try {
   const probe = path.join(directory, 'probe.swift');
