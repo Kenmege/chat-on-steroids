@@ -1590,6 +1590,7 @@
   "Recovery timing details": "복구 타이밍 세부 정보",
   "Unverified": "미검증",
   "Failed": "실패",
+  "Failed Pro turns recover above the compaction threshold": "압축 임계값을 초과한 실패한 Pro 턴은 복구됩니다",
   "Finished": "완료됨",
   "Could not copy text.": "텍스트를 복사하지 못했습니다.",
   "Bottom panel": "하단 패널",
